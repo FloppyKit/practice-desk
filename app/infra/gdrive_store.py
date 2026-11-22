@@ -1,8 +1,10 @@
 """Google Drive behind the chart pipe. Same paths as Proton: /Clients/Last, First/Chart/…"""
 from __future__ import annotations
 
+import json
 import os
 import threading
+import urllib.error
 from datetime import datetime
 from typing import Any
 
@@ -18,6 +20,50 @@ def clear_cache() -> None:
     _cache.clear()
     if hasattr(_local, "svc"):
         del _local.svc
+
+
+def _google_failure(exc: BaseException) -> ChartError | None:
+    if isinstance(exc, ChartError):
+        return None
+    name = type(exc).__name__
+    mod = type(exc).__module__
+    if name in {
+        "HttpError",
+        "GoogleAuthError",
+        "RefreshError",
+        "TransportError",
+        "MalformedError",
+        "DefaultCredentialsError",
+    }:
+        return ChartError("Google Drive is not reachable")
+    if mod.startswith("google.auth") or mod.startswith("googleapiclient.errors"):
+        return ChartError("Google Drive is not reachable")
+    if isinstance(exc, (json.JSONDecodeError, urllib.error.URLError, TimeoutError, ConnectionError)):
+        return ChartError("Google Drive is not reachable")
+    return None
+
+
+def _gone(exc: BaseException) -> bool:
+    resp = getattr(exc, "resp", None)
+    status = getattr(resp, "status", None) if resp is not None else None
+    try:
+        return int(status) == 404
+    except (TypeError, ValueError):
+        return False
+
+
+def _exec(req: Any) -> Any:
+    try:
+        return req.execute()
+    except ChartError:
+        raise
+    except Exception as exc:
+        if _gone(exc):
+            raise ChartError("not found", 404) from exc
+        mapped = _google_failure(exc)
+        if mapped is not None:
+            raise mapped from exc
+        raise
 
 
 def _root() -> str:
@@ -39,11 +85,25 @@ def drive_service():
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
 
-    creds = service_account.Credentials.from_service_account_file(path, scopes=_SCOPES)
+    try:
+        creds = service_account.Credentials.from_service_account_file(path, scopes=_SCOPES)
+    except (ValueError, json.JSONDecodeError, OSError) as exc:
+        raise ChartError("Google account file is not valid") from exc
+    except Exception as exc:
+        mapped = _google_failure(exc)
+        if mapped is not None:
+            raise ChartError("Google account file is not valid") from exc
+        raise
     subject = (os.environ.get("GOOGLE_DRIVE_IMPERSONATE") or "").strip()
-    if subject:
-        creds = creds.with_subject(subject)
-    svc = build("drive", "v3", credentials=creds, cache_discovery=False)
+    try:
+        if subject:
+            creds = creds.with_subject(subject)
+        svc = build("drive", "v3", credentials=creds, cache_discovery=False)
+    except Exception as exc:
+        mapped = _google_failure(exc)
+        if mapped is not None:
+            raise mapped from exc
+        raise
     _local.svc = svc
     return svc
 
@@ -71,7 +131,7 @@ def _children(svc, parent: str) -> list[dict[str, Any]]:
         }
         if token:
             kwargs["pageToken"] = token
-        resp = svc.files().list(**kwargs).execute()
+        resp = _exec(svc.files().list(**kwargs))
         out.extend(resp.get("files") or [])
         token = resp.get("nextPageToken")
         if not token:
@@ -85,13 +145,34 @@ def _one(children: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
     return hits[0] if hits else None
 
 
+def _still_there(svc, folder_id: str, parent: str, name: str) -> bool:
+    """A cached id is only a folder we may write under when Drive still says so."""
+    try:
+        meta = _exec(svc.files().get(
+            fileId=folder_id,
+            fields="id, name, mimeType, trashed, parents",
+            supportsAllDrives=True,
+        ))
+    except ChartError as exc:
+        if exc.status == 404:
+            return False
+        raise
+    if not isinstance(meta, dict) or meta.get("trashed"):
+        return False
+    if meta.get("name") != name or meta.get("mimeType") != _FOLDER:
+        return False
+    return parent in (meta.get("parents") or [])
+
+
 def _resolve(svc, path: str, *, create: bool) -> str | None:
     parent = _root()
     for name in segments(path):
         cached = _cache.get((parent, name))
-        if cached:
+        if cached and _still_there(svc, cached, parent, name):
             parent = cached
             continue
+        if cached:
+            _cache.pop((parent, name), None)
         found = _one(_children(svc, parent), name)
         if found:
             if found.get("mimeType") != _FOLDER:
@@ -102,11 +183,11 @@ def _resolve(svc, path: str, *, create: bool) -> str | None:
             continue
         if not create:
             return None
-        made = svc.files().create(
+        made = _exec(svc.files().create(
             body={"name": name, "mimeType": _FOLDER, "parents": [parent]},
             fields="id, name, mimeType",
             supportsAllDrives=True,
-        ).execute()
+        ))
         new_id = str(made["id"])
         _cache[(parent, name)] = new_id
         parent = new_id
@@ -142,7 +223,7 @@ def list_path(path: str) -> dict[str, Any]:
         raise ChartError("not found", 404)
     _parent, folder_id = found
     if segments(path):
-        meta = svc.files().get(fileId=folder_id, fields="mimeType", supportsAllDrives=True).execute()
+        meta = _exec(svc.files().get(fileId=folder_id, fields="mimeType", supportsAllDrives=True))
         if meta.get("mimeType") != _FOLDER:
             raise ChartError("not a folder", 400)
     items = []
@@ -162,10 +243,10 @@ def read_file(path: str) -> tuple[bytes, str]:
     if found is None:
         raise ChartError("not found", 404)
     _parent, file_id = found
-    meta = svc.files().get(fileId=file_id, fields="mimeType", supportsAllDrives=True).execute()
+    meta = _exec(svc.files().get(fileId=file_id, fields="mimeType", supportsAllDrives=True))
     if meta.get("mimeType") == _FOLDER:
         raise ChartError("not a file", 400)
-    blob = svc.files().get_media(fileId=file_id, supportsAllDrives=True).execute()
+    blob = _exec(svc.files().get_media(fileId=file_id, supportsAllDrives=True))
     if not isinstance(blob, (bytes, bytearray)):
         raise ChartError("drive file read failed")
     return bytes(blob), str(meta.get("mimeType") or "application/octet-stream")
@@ -215,14 +296,14 @@ def save(payload: dict) -> dict[str, Any]:
     if existing:
         if existing.get("mimeType") == _FOLDER:
             raise ChartError("not a file", 409)
-        svc.files().update(fileId=existing["id"], media_body=media, supportsAllDrives=True).execute()
+        _exec(svc.files().update(fileId=existing["id"], media_body=media, supportsAllDrives=True))
     else:
-        svc.files().create(
+        _exec(svc.files().create(
             body={"name": name, "parents": [parent]},
             media_body=media,
             fields="id",
             supportsAllDrives=True,
-        ).execute()
+        ))
     return {"ok": True, "path": path}
 
 
@@ -233,13 +314,13 @@ def share(path: str, title: str = "") -> dict[str, Any]:
     if found is None:
         raise ChartError("not found", 404)
     _parent, file_id = found
-    svc.permissions().create(
+    _exec(svc.permissions().create(
         fileId=file_id,
         body={"type": "anyone", "role": "reader"},
         fields="id",
         supportsAllDrives=True,
-    ).execute()
-    meta = svc.files().get(fileId=file_id, fields="webViewLink", supportsAllDrives=True).execute()
+    ))
+    meta = _exec(svc.files().get(fileId=file_id, fields="webViewLink", supportsAllDrives=True))
     url = str(meta.get("webViewLink") or "")
     if not url.startswith("https://"):
         raise ChartError("share failed")

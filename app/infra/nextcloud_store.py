@@ -60,6 +60,8 @@ def _request(method: str, url: str, data: bytes | None = None, headers: dict[str
     except urllib.error.HTTPError as exc:
         ctype = exc.headers.get("Content-Type") if exc.headers else ""
         return exc.code, exc.read(), ctype or ""
+    except urllib.error.URLError as exc:
+        raise ChartError("Nextcloud is not reachable") from exc
 
 
 def _call(method: str, path: str, data: bytes | None = None, extra: dict[str, str] | None = None) -> tuple[int, bytes, str]:
@@ -67,7 +69,12 @@ def _call(method: str, path: str, data: bytes | None = None, extra: dict[str, st
     headers = {"Authorization": _auth_header(user, password)}
     if extra:
         headers.update(extra)
-    return _request(method, base + _dav_path(user, path), data, headers)
+    try:
+        return _request(method, base + _dav_path(user, path), data, headers)
+    except ChartError:
+        raise
+    except urllib.error.URLError as exc:
+        raise ChartError("Nextcloud is not reachable") from exc
 
 
 def _epoch(raw: str) -> int:
@@ -119,6 +126,20 @@ def _items(xml_bytes: bytes, user: str, folder: str) -> list[dict]:
     return items
 
 
+def _kind(xml_bytes: bytes) -> str:
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError as exc:
+        raise ChartError("mkdir failed") from exc
+    resp = root.find(f"{_DAV}response")
+    prop = None if resp is None else resp.find(f"{_DAV}propstat/{_DAV}prop")
+    if prop is None:
+        raise ChartError("mkdir failed")
+    resource = prop.find(f"{_DAV}resourcetype")
+    is_folder = resource is not None and resource.find(f"{_DAV}collection") is not None
+    return "folder" if is_folder else "file"
+
+
 def mkdir(path: str) -> None:
     parts = segments(path)
     if not parts:
@@ -127,8 +148,16 @@ def mkdir(path: str) -> None:
     for part in parts:
         built += "/" + part
         code, _body, _ctype = _call("MKCOL", built)
-        if code in {201, 204, 405}:
+        if code in {201, 204}:
             continue
+        if code == 405:
+            # 405 means the name is taken. It is "already exists" only when that name is a folder.
+            pcode, pbody, _pctype = _call(
+                "PROPFIND", built, _PROPFIND, {"Depth": "0", "Content-Type": "application/xml"}
+            )
+            if pcode in {200, 207} and _kind(pbody) == "folder":
+                continue
+            raise ChartError("not a folder", 409)
         if code in {404, 409}:
             raise ChartError("parent not found", 404)
         raise ChartError(f"mkdir failed ({code})")
@@ -198,7 +227,10 @@ def share(path: str, title: str = "") -> dict:
         "OCS-APIRequest": "true",
         "Content-Type": "application/x-www-form-urlencoded",
     }
-    code, raw, _ctype = _request("POST", base + "/ocs/v2.php/apps/files_sharing/api/v1/shares", body, headers)
+    try:
+        code, raw, _ctype = _request("POST", base + "/ocs/v2.php/apps/files_sharing/api/v1/shares", body, headers)
+    except urllib.error.URLError as exc:
+        raise ChartError("Nextcloud is not reachable") from exc
     if code >= 400:
         raise ChartError("share failed")
     try:

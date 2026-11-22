@@ -1386,6 +1386,8 @@ def _drive_mkdir(path: str) -> None:
             json.loads(resp.read().decode() or '{}')
     except HTTPError as e:
         raise HTTPException(e.code if e.code >= 400 else 502, e.read().decode()[:200]) from e
+    except URLError as e:
+        raise HTTPException(502, 'Drive is not reachable') from e
 
 def _folder_names(path: str) -> dict[str, str] | None:
     """{lowercase name: real name} of child folders, or None when the folder is missing/unreadable."""
@@ -1472,6 +1474,8 @@ def _notify_get(path: str) -> tuple[int, bytes, str]:
             return (resp.status, resp.read(), ctype)
     except HTTPError as e:
         return (e.code, e.read(), 'application/json')
+    except URLError:
+        return (502, json.dumps({'ok': False, 'error': 'Drive is not reachable'}).encode(), 'application/json')
 
 def _notify_post(path: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     from app.infra.chart_store import local_post
@@ -1490,6 +1494,8 @@ def _notify_post(path: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any
         except Exception:
             body = {'ok': False, 'error': 'notify failed'}
         return (e.code if e.code >= 400 else 502, body)
+    except URLError:
+        return (502, {'ok': False, 'error': 'Drive is not reachable'})
 
 def _drive_http_save(payload: dict[str, Any]) -> dict[str, Any]:
     """Save bytes on the chart pipe. Proton still uses the notify bridge. Other backends do not."""
@@ -1508,6 +1514,8 @@ def _drive_http_save(payload: dict[str, Any]) -> dict[str, Any]:
             saved = json.loads(resp.read().decode() or '{}')
     except HTTPError as e:
         raise HTTPException(e.code if e.code >= 400 else 502, e.read().decode()[:200]) from e
+    except URLError as e:
+        raise HTTPException(502, 'Drive is not reachable') from e
     if not saved.get('ok'):
         raise HTTPException(502, 'drive save failed')
     return saved

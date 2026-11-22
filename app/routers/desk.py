@@ -418,8 +418,12 @@ def api_desk_meta():
     """Staff links — office + guest waiting room."""
     runtime._require_staff()
     runtime._warm_client_window()
-    from app.infra.chart_store import backend_name
-    resp = {'ok': True, 'office_url': runtime.os.environ.get('LIVEKIT_OFFICE_URL', '').strip(), 'guest_url': runtime.os.environ.get('LIVEKIT_GUEST_URL', runtime.video_url()).strip(), 'agent': True, 'drive': True, 'chart_backend': backend_name(), 'practice': True, 'superbill': True, 'vault_key': runtime.os.environ.get('DESK_VAULT_SECRET') or runtime.REMIND_SECRET}
+    from app.infra.chart_store import ChartError, backend_name
+    try:
+        chart_backend = backend_name()
+    except ChartError as exc:
+        raise runtime.HTTPException(exc.status if exc.status >= 400 else 502, str(exc)[:200]) from exc
+    resp = {'ok': True, 'office_url': runtime.os.environ.get('LIVEKIT_OFFICE_URL', '').strip(), 'guest_url': runtime.os.environ.get('LIVEKIT_GUEST_URL', runtime.video_url()).strip(), 'agent': True, 'drive': True, 'chart_backend': chart_backend, 'practice': True, 'superbill': True, 'vault_key': runtime.os.environ.get('DESK_VAULT_SECRET') or runtime.REMIND_SECRET}
     prev = runtime.os.environ.get('DESK_VAULT_SECRET_PREV', '').strip()
     if prev:
         resp['vault_key_prev'] = prev
@@ -490,8 +494,12 @@ def api_desk_drive_share(req: runtime.DriveShareRequest):
         first = (name or 'there').split()[0]
         sms = send_sms(phone, f'Hi {first}, a file is ready from the practice: {url} — {runtime.HOST_SHORT}', kind='file', source='desk', template='file')
     ok = bool(mail.get('ok') or sms.get('ok'))
-    from app.infra.chart_store import backend_name
-    return {'ok': ok, 'cloaked': cloaked, 'kind': 'cloak' if cloaked else backend_name(), 'email': {'ok': bool(mail.get('ok')), 'skipped': bool(mail.get('skipped')), 'detail': mail.get('detail') or ''}, 'sms': {'ok': bool(sms.get('ok')), 'queued': bool(sms.get('queued')), 'skipped': bool(sms.get('skipped')), 'detail': sms.get('detail') or ''}}
+    from app.infra.chart_store import ChartError, backend_name
+    try:
+        kind = 'cloak' if cloaked else backend_name()
+    except ChartError as exc:
+        raise runtime.HTTPException(exc.status if exc.status >= 400 else 502, str(exc)[:200]) from exc
+    return {'ok': ok, 'cloaked': cloaked, 'kind': kind, 'email': {'ok': bool(mail.get('ok')), 'skipped': bool(mail.get('skipped')), 'detail': mail.get('detail') or ''}, 'sms': {'ok': bool(sms.get('ok')), 'queued': bool(sms.get('queued')), 'skipped': bool(sms.get('skipped')), 'detail': sms.get('detail') or ''}}
 
 def api_desk_agent(req: runtime.DeskAgentRequest, background_tasks: runtime.BackgroundTasks, secret: str=runtime.Query(default='')):
     """Pa (Bedrock Nova Pro): look up, create, send forms/mail, book."""
