@@ -244,9 +244,132 @@
     }
   }
 
+  function byId(id) {
+    return (
+      document.getElementById(id) ||
+      (global.__deskPop && global.__deskPop.document && global.__deskPop.document.getElementById(id))
+    );
+  }
+
+  var booksOn = false;
+  var booksMonth = "";
+
+  function shiftMonth(key, delta) {
+    var parts = (key || "2026-01").split("-").map(Number);
+    var d = new Date(parts[0], parts[1] - 1 + delta, 1);
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+  }
+
+  function paintBooks(data) {
+    var mo = data.month || {};
+    var yr = data.year || {};
+    var title = byId("books-title");
+    if (title) title.textContent = mo.label || "Books";
+    function block(label, s, extra) {
+      return (
+        '<div class="books-block"><h4 style="margin:0 0 0.35rem">' + esc(label) + "</h4>" +
+        '<div class="books-stat"><span>Collected</span><strong>' + esc(s.collected_pretty || "$0.00") + "</strong></div>" +
+        '<div class="books-stat"><span>Outstanding</span><span>' + esc(s.owed_pretty || "$0.00") + "</span></div>" +
+        '<div class="books-stat"><span>Waived</span><span>' + esc(s.waived_pretty || "$0.00") + "</span></div>" +
+        '<div class="books-stat"><span>Visits · no-shows</span><span>' +
+        esc(String(s.visits || 0)) + " · " + esc(String(s.no_shows || 0)) + "</span></div>" +
+        (extra || "") +
+        "</div>"
+      );
+    }
+    var lines = (mo.lines || []).map(function (ln) {
+      return (
+        "<li><span>" + esc(ln.dos || "") +
+        (ln.client_name ? " · " + esc(ln.client_name) : "") +
+        (ln.note ? " · " + esc(ln.note) : "") +
+        "</span><span class='desk-meta'>" + esc(ln.amount_pretty || "") +
+        " · " + esc(ln.status || "") + "</span></li>"
+      );
+    }).join("");
+    var recent = lines
+      ? "<ul class='home-list'>" + lines + "</ul>"
+      : "<p class='desk-meta'>No ledger lines in this month yet.</p>";
+    byId("books-body").innerHTML = block(mo.label || "This month", mo, recent) + block(yr.label ? "Year " + yr.label : "This year", yr, "");
+  }
+
+  function loadBooks(month) {
+    var status = byId("books-status");
+    if (status) status.textContent = "Loading…";
+    var q = month ? "?month=" + encodeURIComponent(month) : "";
+    return global.deskFetch("/api/desk/books" + q).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (data) {
+        return { ok: res.ok, data: data };
+      });
+    }).then(function (x) {
+      if (!x.ok || !x.data.ok) {
+        if (status) status.textContent = x.data.detail || "Could not load books.";
+        return;
+      }
+      booksMonth = (x.data.month && x.data.month.period) || month || "";
+      if (status) status.textContent = "";
+      paintBooks(x.data);
+    });
+  }
+
+  function closeBooks() {
+    booksOn = false;
+    var pop = byId("books-pop");
+    if (pop) pop.hidden = true;
+    if (typeof global.syncSheetLock === "function") global.syncSheetLock();
+    if (typeof global.applyTiles === "function") global.applyTiles();
+  }
+
+  function openBooks() {
+    if (typeof global.booksWanted === "function" && global.booksWanted()) {
+      closeBooks();
+      return Promise.resolve();
+    }
+    if (typeof global.closeAllDrawers === "function") global.closeAllDrawers();
+    if (typeof global.closePop === "function") global.closePop();
+    if (typeof global.closeSend === "function") global.closeSend();
+    if (typeof global.closeNote === "function") global.closeNote();
+    if (typeof global.closeSuperbill === "function") global.closeSuperbill();
+    var files = byId("files-pop");
+    if (files) files.hidden = true;
+    booksOn = true;
+    var pop = byId("books-pop");
+    if (pop) pop.hidden = false;
+    if (typeof global.applyTiles === "function") global.applyTiles();
+    return loadBooks(booksMonth).catch(function (e) {
+      var status = byId("books-status");
+      if (status) status.textContent = (e && e.message) || "failed";
+    });
+  }
+
+  function bindBooksPanel() {
+    var openBtn = byId("open-books");
+    if (openBtn) {
+      openBtn.onclick = function () {
+        if (typeof global.closeMoreMenu === "function") global.closeMoreMenu();
+        if (typeof global.needUnlock === "function" && global.needUnlock()) return;
+        openBooks();
+      };
+    }
+    var closeBtn = byId("books-close");
+    if (closeBtn) closeBtn.onclick = closeBooks;
+    var prev = byId("books-prev");
+    if (prev) prev.onclick = function () { loadBooks(shiftMonth(booksMonth, -1)); };
+    var next = byId("books-next");
+    if (next) next.onclick = function () { loadBooks(shiftMonth(booksMonth, 1)); };
+    var now = byId("books-now");
+    if (now) now.onclick = function () { booksMonth = ""; loadBooks(""); };
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", bindBooksPanel);
+  else bindBooksPanel();
+
   global.DeskBooks = {
     chip: booksChip,
     form: formHtml,
     bind: bind,
+    isOpen: function () { return booksOn; },
+    markClosed: function () { booksOn = false; },
+    close: closeBooks,
+    open: openBooks,
   };
 })(window);

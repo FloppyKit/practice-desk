@@ -427,6 +427,24 @@
       .catch(function () {});
   }
 
+  function handsetEl(id) {
+    return (
+      document.getElementById(id) ||
+      (window.__deskPop && window.__deskPop.document && window.__deskPop.document.getElementById(id))
+    );
+  }
+
+  function syncHandsetUi() {
+    var phone = handsetEl("prac-handset-phone");
+    var wrap = handsetEl("prac-callback-wrap");
+    if (wrap) wrap.hidden = !(phone && phone.checked);
+  }
+
+  var handsetBrowser = handsetEl("prac-handset-browser");
+  var handsetPhone = handsetEl("prac-handset-phone");
+  if (handsetBrowser) handsetBrowser.onchange = syncHandsetUi;
+  if (handsetPhone) handsetPhone.onchange = syncHandsetUi;
+
   window.DeskCall = {
     confirm: confirm,
     fromNumber: fromNumber,

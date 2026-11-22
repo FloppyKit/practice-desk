@@ -666,5 +666,169 @@
     shapeNote: shapeNote,
   };
 
+  function byId(id) {
+    return (
+      document.getElementById(id) ||
+      (global.__deskPop && global.__deskPop.document && global.__deskPop.document.getElementById(id))
+    );
+  }
+
+  function esc(s) {
+    return String(s || "").replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  // Settings → Sealed intake. Crypto stays on PracticeVault; this is the panel.
+  async function cipherStatusRefresh() {
+    var st = byId("cipher-status");
+    if (!st) return;
+    if (!vault.ready()) {
+      st.textContent = "Sign in to check sealed intake.";
+      return;
+    }
+    try {
+      var res = await global.deskFetch("/api/desk/cipher/status");
+      var data = await res.json().catch(function () { return {}; });
+      if (!res.ok) { st.textContent = "Cipher status unavailable."; return; }
+      var f = data.flags || {};
+      if (!f.enabled) {
+        st.textContent = "Cipher mode is off on the server (CIPHER_P1=0).";
+        return;
+      }
+      var n = data.pending || 0;
+      st.textContent = "Cipher on · " + n + " sealed envelope" + (n === 1 ? "" : "s") + " waiting.";
+    } catch (e) {
+      st.textContent = "Cipher status unavailable.";
+    }
+  }
+
+  async function cipherDrainAll() {
+    var st = byId("cipher-status");
+    var list = byId("cipher-list");
+    if (!vault.ready()) {
+      if (st) st.textContent = "Unlock first — drain writes into the encrypted vault.";
+      return;
+    }
+    if (st) st.textContent = "Draining…";
+    var items = [];
+    try {
+      var res = await global.deskFetch("/api/desk/cipher/pending");
+      var data = await res.json().catch(function () { return {}; });
+      if (!res.ok) throw new Error(data.detail || "pending list failed");
+      items = data.pending || [];
+    } catch (e) {
+      if (st) st.textContent = "Drain failed: " + (e.message || e);
+      return;
+    }
+    if (!items.length) {
+      if (st) st.textContent = "Nothing sealed waiting.";
+      if (list) list.innerHTML = "";
+      return;
+    }
+    var lines = [];
+    for (var i = 0; i < items.length; i++) {
+      var row = items[i];
+      try {
+        var r = await global.deskFetch("/api/desk/cipher/drain", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: row.id }),
+        });
+        var out = await r.json().catch(function () { return {}; });
+        if (!r.ok || !out.ok) throw new Error(out.detail || "unseal failed");
+        var p = out.plaintext || {};
+        await vault.putClient({
+          id: p.client_id || "",
+          name: p.name || "",
+          email: p.email || "",
+          phone: p.phone || "",
+          notes: p.notes || "",
+          source: "cipher-intake",
+        });
+        await vault.putVisit({
+          id: p.event_id || row.id,
+          email: p.email || "",
+          name: p.name || "",
+          event_type: p.event_type || "",
+          start: p.start || "",
+          duration_minutes: p.duration_minutes || null,
+          sms_consent: !!p.sms_consent,
+          notes: p.notes || "",
+          envelope_id: row.id,
+        });
+        lines.push("Drained " + (p.name || "(no name)") + (p.email ? " · " + p.email : ""));
+      } catch (err) {
+        lines.push("Failed " + String(row.id || "").slice(0, 8) + ": " + (err.message || err));
+      }
+    }
+    if (list) {
+      list.innerHTML = lines.map(function (l) {
+        return '<p class="desk-meta">' + esc(l) + "</p>";
+      }).join("");
+    }
+    cipherStatusRefresh();
+  }
+
+  async function vaultExportSnapshot() {
+    var st = byId("cipher-status");
+    if (!vault.ready() || !vault.exportSnapshot) {
+      if (st) st.textContent = "Unlock first — the snapshot uses the vault key.";
+      return;
+    }
+    try {
+      var snap = await vault.exportSnapshot();
+      var blob = new Blob([JSON.stringify(snap)], { type: "application/json" });
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "practice-vault-" + new Date().toISOString().slice(0, 10) + ".json";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+      if (st) st.textContent = "Snapshot downloaded. It stays encrypted with the vault key.";
+    } catch (e) {
+      if (st) st.textContent = "Export failed: " + (e.message || e);
+    }
+  }
+
+  async function vaultImportSnapshotFile(ev) {
+    var st = byId("cipher-status");
+    var file = ev.target && ev.target.files && ev.target.files[0];
+    if (ev.target) ev.target.value = "";
+    if (!file) return;
+    if (!vault.ready() || !vault.importSnapshot) {
+      if (st) st.textContent = "Unlock first — the snapshot opens with the vault key.";
+      return;
+    }
+    try {
+      var text = await file.text();
+      var out = await vault.importSnapshot(JSON.parse(text));
+      if (st) st.textContent = "Imported " + (out.rows || 0) + " vault rows.";
+    } catch (e) {
+      if (st) st.textContent = "Import failed: " + (e.message || e);
+    }
+  }
+
+  function bindCipherPanel() {
+    var refresh = byId("cipher-refresh");
+    if (refresh) refresh.onclick = cipherStatusRefresh;
+    var drain = byId("cipher-drain");
+    if (drain) drain.onclick = cipherDrainAll;
+    var exp = byId("vault-export");
+    if (exp) exp.onclick = vaultExportSnapshot;
+    var imp = byId("vault-import-btn");
+    if (imp) imp.onclick = function () {
+      var f = byId("vault-import-file");
+      if (f) f.click();
+    };
+    var file = byId("vault-import-file");
+    if (file) file.addEventListener("change", vaultImportSnapshotFile);
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", bindCipherPanel);
+  else bindCipherPanel();
+
+  vault.refreshStatus = cipherStatusRefresh;
   global.PracticeVault = vault;
 })(window);

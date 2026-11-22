@@ -1524,8 +1524,8 @@
   </script>
   <script src="/static/js/desk-auth.js?v=2"></script>
   <script src="/static/js/desk-layout.js?v=1"></script>
-  <script src="/static/js/desk-vault.js?v=3"></script>
-  <script src="/static/js/desk-books.js?v=3"></script>
+  <script src="/static/js/desk-vault.js?v=4"></script>
+  <script src="/static/js/desk-books.js?v=4"></script>
   <script src="/static/js/desk-services.js?v=2"></script>
   <script src="/static/js/desk-phrases.js?v=1"></script>
   <script>
@@ -1778,7 +1778,7 @@
     let mailOn = false;
     let videoFloat = false;
     const FLOAT_KEY = "desk-video-float-v1";
-    let booksOn = false;
+
     let mailCurrent = "";
     let mailLoading = false;
     let officeUrl = "";
@@ -1811,7 +1811,7 @@
     }
     function booksWanted() {
       if (deskView === "video") return false;
-      return !!booksOn;
+      return !!(window.DeskBooks && DeskBooks.isOpen());
     }
     function videoWanted() {
       if (!isUnlocked()) return false;
@@ -1932,7 +1932,7 @@
       clientClosed = true;
       settingsForced = false;
       settingsClosed = true;
-      booksOn = false;
+      if (window.DeskBooks) DeskBooks.markClosed();
       if ($("books-pop")) $("books-pop").hidden = true;
     }
     function collapseSettings() {
@@ -2787,26 +2787,6 @@
       $("bill-pop").hidden = true;
       syncSheetLock();
     }
-    function closeBooks() {
-      booksOn = false;
-      if ($("books-pop")) $("books-pop").hidden = true;
-      syncSheetLock();
-      applyTiles();
-    }
-    async function openBooks() {
-      if (booksWanted()) { closeBooks(); return; }
-      closeAllDrawers();
-      closePop();
-      closeSend();
-      closeNote();
-      closeSuperbill();
-      if ($("files-pop")) $("files-pop").hidden = true;
-      booksOn = true;
-      $("books-pop").hidden = false;
-      applyTiles();
-      try { await loadBooks(booksMonth); }
-      catch (e) { if ($("books-status")) $("books-status").textContent = e.message || "failed"; }
-    }
     async function openRefills() {
       const pop = $("refills-pop"), box = $("refills-list");
       box.innerHTML = "<p class='desk-meta'>Loading…</p>";
@@ -2848,61 +2828,6 @@
     if ($("refills-close")) $("refills-close").onclick = closeRefills;
     if ($("open-refills")) $("open-refills").onclick = () => { closeMoreMenu(); if (needUnlock()) return; openRefills(); };
     document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("refills-pop").hidden) closeRefills(); });
-    if ($("open-books")) $("open-books").onclick = () => { closeMoreMenu(); if (needUnlock()) return; openBooks(); };
-    if ($("books-close")) $("books-close").onclick = closeBooks;
-    let booksMonth = "";
-    function shiftMonth(key, delta) {
-      const [y, m] = (key || "2026-01").split("-").map(Number);
-      const d = new Date(y, m - 1 + delta, 1);
-      return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
-    }
-    function paintBooks(data) {
-      const mo = data.month || {};
-      const yr = data.year || {};
-      if ($("books-title")) $("books-title").textContent = mo.label || "Books";
-      function block(title, s, extra) {
-        return (
-          '<div class="books-block"><h4 style="margin:0 0 0.35rem">' + esc(title) + "</h4>" +
-          '<div class="books-stat"><span>Collected</span><strong>' + esc(s.collected_pretty || "$0.00") + "</strong></div>" +
-          '<div class="books-stat"><span>Outstanding</span><span>' + esc(s.owed_pretty || "$0.00") + "</span></div>" +
-          '<div class="books-stat"><span>Waived</span><span>' + esc(s.waived_pretty || "$0.00") + "</span></div>" +
-          '<div class="books-stat"><span>Visits · no-shows</span><span>' +
-          esc(String(s.visits || 0)) + " · " + esc(String(s.no_shows || 0)) + "</span></div>" +
-          (extra || "") +
-          "</div>"
-        );
-      }
-      const lines = (mo.lines || []).map(function (ln) {
-        return (
-          "<li><span>" + esc(ln.dos || "") +
-          (ln.client_name ? " · " + esc(ln.client_name) : "") +
-          (ln.note ? " · " + esc(ln.note) : "") +
-          "</span><span class='desk-meta'>" + esc(ln.amount_pretty || "") +
-          " · " + esc(ln.status || "") + "</span></li>"
-        );
-      }).join("");
-      const recent = lines
-        ? "<ul class='home-list'>" + lines + "</ul>"
-        : "<p class='desk-meta'>No ledger lines in this month yet.</p>";
-      $("books-body").innerHTML = block(mo.label || "This month", mo, recent) + block(yr.label ? "Year " + yr.label : "This year", yr, "");
-    }
-    async function loadBooks(month) {
-      const status = $("books-status");
-      if (status) status.textContent = "Loading…";
-      const q = month ? ("?month=" + encodeURIComponent(month)) : "";
-      const res = await deskFetch("/api/desk/books" + q);
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.ok) {
-        if (status) status.textContent = data.detail || "Could not load books.";
-        return;
-      }
-      booksMonth = (data.month && data.month.period) || month || "";
-      if (status) status.textContent = "";
-      paintBooks(data);
-    }
-    if ($("books-prev")) $("books-prev").onclick = () => loadBooks(shiftMonth(booksMonth, -1));
-    if ($("books-next")) $("books-next").onclick = () => loadBooks(shiftMonth(booksMonth, 1));
-    if ($("books-now")) $("books-now").onclick = () => { booksMonth = ""; loadBooks(""); };
     let practiceCache = null;
     let practiceServices = [];
     function bust(url) {
@@ -3049,7 +2974,7 @@
     $("send-close").onclick = closeSend;
     document.addEventListener("keydown", (e) => {
       if (e.key !== "Escape") return;
-      if ($("books-pop") && !$("books-pop").hidden) closeBooks();
+      if ($("books-pop") && !$("books-pop").hidden) DeskBooks.close();
       else if (!$("superbill-pop").hidden) closeSuperbill();
       else if (!$("bill-pop").hidden) closeBill();
       else if (!$("note-pop").hidden) closeNote();
@@ -3060,12 +2985,6 @@
     });
     if ($("open-practice")) $("open-practice").onclick = () => { closeMoreMenu(); if (needUnlock()) return; togglePractice(); };
     $("practice-close").onclick = closePractice;
-    function syncHandsetUi() {
-      const phoneOn = $("prac-handset-phone") && $("prac-handset-phone").checked;
-      if ($("prac-callback-wrap")) $("prac-callback-wrap").hidden = !phoneOn;
-    }
-    if ($("prac-handset-browser")) $("prac-handset-browser").onchange = syncHandsetUi;
-    if ($("prac-handset-phone")) $("prac-handset-phone").onchange = syncHandsetUi;
     $("practice-pop").addEventListener("toggle", (e) => {
       const el = e.target;
       if (!el.open || !el.classList || !el.classList.contains("prac-acc")) return;
@@ -3754,29 +3673,6 @@
       $("files-pop").hidden = true;
       openSendPop();
     };
-    function placeFiles() {
-      fitSheet($("files-pop"));
-    }
-    function openDriveAt(path, title) {
-      closeHomeDrawer();
-      closePop();
-      closeSend();
-      closePractice();
-      closeSuperbill();
-      $("files-pop").hidden = false;
-      syncSheetLock();
-      placeFiles();
-      const label = $("files-pop-title");
-      if (label) label.textContent = title || "Practice files";
-      if (window.PracticeDrive && typeof window.PracticeDrive.go === "function") {
-        window.PracticeDrive.go(path || "/");
-      } else if (document.getElementById("pdrive-root") && document.getElementById("pdrive-root")._pdriveReload) {
-        document.getElementById("pdrive-root")._pdriveReload();
-      }
-    }
-    if ($("open-files")) $("open-files").onclick = () => { closeMoreMenu(); openDriveAt("/", "Practice files"); };
-    $("files-close").onclick = () => { $("files-pop").hidden = true; syncSheetLock(); };
-
     $("pop-dur").onclick = (e) => {
       const b = e.target.closest("button[data-dur]");
       if (!b) return;
@@ -5942,8 +5838,14 @@
       if (window.PracticeVault) {
         if (meta.vault_key) PracticeVault.unlock(meta.vault_key, meta.vault_key_prev).catch(() => {});
       }
-      cipherStatusRefresh();
-      if (!window.__cipherPoll) window.__cipherPoll = setInterval(cipherStatusRefresh, 60000);
+      if (window.PracticeVault && PracticeVault.refreshStatus) {
+        PracticeVault.refreshStatus();
+        if (!window.__cipherPoll) {
+          window.__cipherPoll = setInterval(function () {
+            if (window.PracticeVault && PracticeVault.refreshStatus) PracticeVault.refreshStatus();
+          }, 60000);
+        }
+      }
       try { await loadWeek(); }
       catch (e) { msg("Week grid failed: " + e.message); return; }
       try { await loadPractice(); } catch (e) {}
@@ -5975,149 +5877,16 @@
       return String(s || "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
     }
 
-    // ---- CIPHER_P1 sealed intake + vault snapshot (Settings → Sealed intake)
-    async function cipherStatusRefresh() {
-      const st = $("cipher-status");
-      if (!st) return;
-      if (!window.PracticeVault || !PracticeVault.ready()) {
-        st.textContent = "Sign in to check sealed intake.";
-        return;
-      }
-      try {
-        const res = await deskFetch("/api/desk/cipher/status");
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) { st.textContent = "Cipher status unavailable."; return; }
-        const f = data.flags || {};
-        if (!f.enabled) {
-          st.textContent = "Cipher mode is off on the server (CIPHER_P1=0).";
-          return;
-        }
-        const n = data.pending || 0;
-        st.textContent = "Cipher on · " + n + " sealed envelope" + (n === 1 ? "" : "s") + " waiting.";
-      } catch (e) {
-        st.textContent = "Cipher status unavailable.";
-      }
-    }
-
-    async function cipherDrainAll() {
-      const st = $("cipher-status");
-      const list = $("cipher-list");
-      if (!window.PracticeVault || !PracticeVault.ready()) {
-        if (st) st.textContent = "Unlock first — drain writes into the encrypted vault.";
-        return;
-      }
-      if (st) st.textContent = "Draining…";
-      let items = [];
-      try {
-        const res = await deskFetch("/api/desk/cipher/pending");
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.detail || "pending list failed");
-        items = data.pending || [];
-      } catch (e) {
-        if (st) st.textContent = "Drain failed: " + (e.message || e);
-        return;
-      }
-      if (!items.length) {
-        if (st) st.textContent = "Nothing sealed waiting.";
-        if (list) list.innerHTML = "";
-        return;
-      }
-      const lines = [];
-      for (const row of items) {
-        try {
-          const r = await deskFetch("/api/desk/cipher/drain", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id: row.id }),
-          });
-          const out = await r.json().catch(() => ({}));
-          if (!r.ok || !out.ok) throw new Error(out.detail || "unseal failed");
-          const p = out.plaintext || {};
-          await PracticeVault.putClient({
-            id: p.client_id || "",
-            name: p.name || "",
-            email: p.email || "",
-            phone: p.phone || "",
-            notes: p.notes || "",
-            source: "cipher-intake",
-          });
-          await PracticeVault.putVisit({
-            id: p.event_id || row.id,
-            email: p.email || "",
-            name: p.name || "",
-            event_type: p.event_type || "",
-            start: p.start || "",
-            duration_minutes: p.duration_minutes || null,
-            sms_consent: !!p.sms_consent,
-            notes: p.notes || "",
-            envelope_id: row.id,
-          });
-          lines.push("Drained " + (p.name || "(no name)") + (p.email ? " · " + p.email : ""));
-        } catch (e) {
-          lines.push("Failed " + String(row.id || "").slice(0, 8) + ": " + (e.message || e));
-        }
-      }
-      if (list) {
-        list.innerHTML = lines.map((l) => '<p class="desk-meta">' + esc(l) + "</p>").join("");
-      }
-      cipherStatusRefresh();
-    }
-
-    async function vaultExportSnapshot() {
-      const st = $("cipher-status");
-      if (!window.PracticeVault || !PracticeVault.ready() || !PracticeVault.exportSnapshot) {
-        if (st) st.textContent = "Unlock first — the snapshot uses the vault key.";
-        return;
-      }
-      try {
-        const snap = await PracticeVault.exportSnapshot();
-        const blob = new Blob([JSON.stringify(snap)], { type: "application/json" });
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = "practice-vault-" + new Date().toISOString().slice(0, 10) + ".json";
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-        if (st) st.textContent = "Snapshot downloaded. It stays encrypted with the vault key.";
-      } catch (e) {
-        if (st) st.textContent = "Export failed: " + (e.message || e);
-      }
-    }
-
-    async function vaultImportSnapshotFile(ev) {
-      const st = $("cipher-status");
-      const file = ev.target && ev.target.files && ev.target.files[0];
-      if (ev.target) ev.target.value = "";
-      if (!file) return;
-      if (!window.PracticeVault || !PracticeVault.ready() || !PracticeVault.importSnapshot) {
-        if (st) st.textContent = "Unlock first — the snapshot opens with the vault key.";
-        return;
-      }
-      try {
-        const text = await file.text();
-        const out = await PracticeVault.importSnapshot(JSON.parse(text));
-        if (st) st.textContent = "Imported " + (out.rows || 0) + " vault rows.";
-      } catch (e) {
-        if (st) st.textContent = "Import failed: " + (e.message || e);
-      }
-    }
-
-    if ($("cipher-refresh")) $("cipher-refresh").onclick = cipherStatusRefresh;
-    if ($("cipher-drain")) $("cipher-drain").onclick = cipherDrainAll;
-    if ($("vault-export")) $("vault-export").onclick = vaultExportSnapshot;
-    if ($("vault-import-btn")) $("vault-import-btn").onclick = () => { const f = $("vault-import-file"); if (f) f.click(); };
-    if ($("vault-import-file")) $("vault-import-file").addEventListener("change", vaultImportSnapshotFile);
     load();
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/desk-sw.js", { scope: "/" }).catch(function () {});
     }
   </script>
   <script src="/static/js/theme.js"></script>
-  <script src="/static/js/desk-call.js?v=4"></script>
+  <script src="/static/js/desk-call.js?v=5"></script>
   <script src="/static/js/pa-router.js?v=2"></script>
   <script src="/static/js/staff-agent.js?v=6"></script>
-  <script src="/static/js/chart-drive.js?v=11"></script>
+  <script src="/static/js/chart-drive.js?v=12"></script>
 <script>
 /* deskfix11: office clock (In call + CT time) and Text opt-outs list */
 (function () {

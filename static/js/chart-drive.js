@@ -543,9 +543,68 @@
     });
   }
 
+  function byId(id) {
+    return (
+      document.getElementById(id) ||
+      (window.__deskPop && window.__deskPop.document && window.__deskPop.document.getElementById(id))
+    );
+  }
+
+  function callPage(name) {
+    var fn = window[name];
+    if (typeof fn === "function") {
+      var args = Array.prototype.slice.call(arguments, 1);
+      return fn.apply(window, args);
+    }
+  }
+
+  function openDriveAt(path, title) {
+    callPage("closeHomeDrawer");
+    callPage("closePop");
+    callPage("closeSend");
+    callPage("closePractice");
+    callPage("closeSuperbill");
+    var pop = byId("files-pop");
+    if (pop) pop.hidden = false;
+    callPage("syncSheetLock");
+    if (pop && typeof window.fitSheet === "function") window.fitSheet(pop);
+    var label = byId("files-pop-title");
+    if (label) label.textContent = title || "Practice files";
+    if (window.PracticeDrive && typeof window.PracticeDrive.go === "function") {
+      window.PracticeDrive.go(path || "/");
+    } else {
+      var root = byId("pdrive-root");
+      if (root && root._pdriveReload) root._pdriveReload();
+    }
+  }
+
+  function bindFilesPop() {
+    var openBtn = byId("open-files");
+    if (openBtn) {
+      openBtn.onclick = function () {
+        callPage("closeMoreMenu");
+        openDriveAt("/", "Practice files");
+      };
+    }
+    var closeBtn = byId("files-close");
+    if (closeBtn) {
+      closeBtn.onclick = function () {
+        var pop = byId("files-pop");
+        if (pop) pop.hidden = true;
+        callPage("syncSheetLock");
+      };
+    }
+  }
+
+  window.openDriveAt = openDriveAt;
+
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", boot);
+    document.addEventListener("DOMContentLoaded", function () {
+      boot();
+      bindFilesPop();
+    });
   } else {
     boot();
+    bindFilesPop();
   }
 })();

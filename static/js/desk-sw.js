@@ -1,5 +1,5 @@
 /* Practice desk shell cache. Never caches API or note bodies. */
-var CACHE = "practice-desk-v24";
+var CACHE = "practice-desk-v25";
 var SHELL = [
   "/desk",
   "/static/desk.webmanifest",
