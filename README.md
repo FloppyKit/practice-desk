@@ -42,4 +42,6 @@ The public booking page reads the visit title, length, and fee from the event-ty
 
 ## Phone
 
-The desk call button places a call through Twilio Voice when `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` are set. That is the phone option in this booker. Leave those empty and the button has no live call.
+The desk call button uses Twilio Voice. Leave these empty and the button places no call.
+
+A call needs `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and a caller number: `TWILIO_PHONE_NUMBER`, or `TWILIO_VOICE_FROM`, or the phone on the practice profile. The default handset is this computer's microphone. That also needs `TWILIO_API_KEY_SID`, `TWILIO_API_KEY_SECRET`, and `TWILIO_DESK_TWIML_APP_SID`. Ringing a phone instead needs the handset number on the practice profile. Set them in the environment before the process starts.

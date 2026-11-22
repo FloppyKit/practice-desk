@@ -38,3 +38,22 @@ def test_booking_page_uses_visit_fee_and_profile_name() -> None:
         assert '$265' not in follow and '$420' not in follow
     finally:
         practice.ROOT = old
+
+def test_readme_phone_names_every_call_setting() -> None:
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    phone = root.joinpath('README.md').read_text(encoding='utf-8').split('## Phone', 1)[1]
+    example = root.joinpath('.env.example').read_text(encoding='utf-8')
+    names = (
+        'TWILIO_ACCOUNT_SID',
+        'TWILIO_AUTH_TOKEN',
+        'TWILIO_PHONE_NUMBER',
+        'TWILIO_VOICE_FROM',
+        'TWILIO_API_KEY_SID',
+        'TWILIO_API_KEY_SECRET',
+        'TWILIO_DESK_TWIML_APP_SID',
+    )
+    for name in names:
+        assert name in phone, name
+        assert f'{name}=' in example, name
+    assert 'when `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` are set' not in phone
