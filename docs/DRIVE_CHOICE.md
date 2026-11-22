@@ -1,30 +1,39 @@
 # Chart storage for a vanilla install
 
-This note is a map of what the code already does. It does not add a backend.
+The booker has one pipe for chart files: make a folder, list it, read a file, save a file, share a file. `CHART_BACKEND` picks who answers that pipe. The default is `proton`. Paths are the same on every backend: living charts under `/Clients/<Last, First>/`, with `Billing` and `Chart/Visit Notes` (plus Consents, Labs, Letters, Orders).
 
-## Proton Drive — default, and it is the one the code speaks
+Signing a note creates those folders when the living folder is missing. If the store cannot be listed, the sign returns HTTP 502 and writes nothing.
 
-Chart folders are Proton paths: living charts under `/Clients`, older charts under `/Client files`. The booker does not talk to Proton itself. It calls a notify service on `NOTIFY_WEBHOOK_URL` (default `http://127.0.0.1:8791/notify`):
+## Proton Drive — default
+
+The booker does not talk to Proton itself. It calls a notify service on `NOTIFY_WEBHOOK_URL` (default `http://127.0.0.1:8791/notify`):
 
 - `POST /drive/mkdir` with a JSON `path`
 - `GET /drive/list?path=`
-- file read and save go through the same notify base
+- `GET /drive/file?path=`
+- `POST /drive/save` with `path` and `b64` or `text`
+- `POST /drive/share` with `path`
 
-Signing a note creates `Billing` and `Chart/Visit Notes` (plus Consents, Labs, Letters, Orders) when the living folder is missing. If the drive cannot be listed, the sign returns HTTP 502 and writes nothing. Folder links in the patient record may point at `drive.proton.me`.
+Leave `CHART_BACKEND` unset, or set it to `proton`. Run your own bridge that accepts those calls and set the notify token. The bridge is not in this repo. Folder links may point at `drive.proton.me`.
 
-A new install keeps this default by running a small bridge that accepts those HTTP calls and performs them on a Proton Drive account. The bridge is not in this repo. Point `NOTIFY_WEBHOOK_URL` at it and set the notify token. No application change is required.
+## Google Drive — optional
 
-## Google Drive — optional, not recommended, not built
+Set `CHART_BACKEND=gdrive`, `GOOGLE_DRIVE_SA_FILE` to a service-account JSON file, and `GOOGLE_DRIVE_ROOT_ID` to the folder that holds `/Clients`. Optional `GOOGLE_DRIVE_IMPERSONATE` is a Workspace user to act as. The calendar service account is not reused.
 
-Google in this tree is the calendar (event read, write, and a mirror), not the chart. There is no Google Drive client, no Drive folder id, and no path that stores a note or a superbill in Google Drive. Adding it means a new module with the same mkdir/list/read/write operations the notify bridge already exposes, plus a choice at startup so a site does not write half the chart to Proton and half to Google. That is more moving parts, a second vendor, and a second place PHI can land. Leave it off unless a site already has a reason.
+The same paths are folders under that root. A share makes an anyone-with-the-link reader permission and returns the Google link. If Google refuses the link, the share fails. It does not pretend the file was shared.
 
-## Nextcloud — not built
+## Nextcloud — optional
 
-Nothing in the booker speaks WebDAV or Nextcloud. A site that wants Nextcloud has to add a backend that honors the same folder layout (`/Clients/<Last, First>/Chart/...` and `Billing`) and the same failure rule: if the folder cannot be read, do not pretend the file was saved. The route code can stay if that backend is what the notify bridge calls. Building a second client inside the booker is the larger job.
+Set `CHART_BACKEND=nextcloud`, `NEXTCLOUD_URL` (https), `NEXTCLOUD_USER`, and `NEXTCLOUD_APP_PASSWORD`. The app password is an app password, not the account password. The URL must be https, except localhost for a local box.
 
-## What a new install still has to add
+Files go over WebDAV (`MKCOL`, `PROPFIND`, `GET`, `PUT`) on the same paths. A share creates a public link through Nextcloud's share API. If that link is missing, the share fails.
 
-- A notify bridge for Proton (the default), or a replacement that serves `/drive/mkdir` and `/drive/list` for another store.
-- `NOTIFY_WEBHOOK_URL` and the notify token in the environment.
+## What a new install still sets
+
+- `CHART_BACKEND=proton`, `gdrive`, or `nextcloud`. Anything else is an error.
+- For Proton: `NOTIFY_WEBHOOK_URL` and the notify token, plus a bridge you run.
+- For Google Drive: the service-account file and the root folder id.
+- For Nextcloud: the URL, user, and app password.
 - The practice's own event-type file, mounted at deploy time. The example file is generic.
-- Nothing else in this repo to choose Proton. Choosing Google Drive or Nextcloud is new work, and Google Drive is the one to skip.
+
+Email and SMS still use the notify bridge. Only the chart calls switch with `CHART_BACKEND`.

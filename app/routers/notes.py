@@ -78,18 +78,8 @@ def api_desk_note_sign(req: runtime.DeskNoteSignRequest, background_tasks: runti
         pdf = after_visit_pdf(fields, sections, title=chart_title, letterhead=letterhead, logo=logo)
     else:
         pdf = markdown_pdf(render_template(tid, fields))
-    from app.messaging.notify import NOTIFY_TOKEN
-
     def _save(path: str, blob: bytes) -> None:
-        payload = runtime.json.dumps({'path': path, 'b64': base64.b64encode(blob).decode('ascii')}).encode()
-        r = runtime.UrlRequest(runtime._notify_base() + '/drive/save', data=payload, headers={'Content-Type': 'application/json', 'X-Notify-Token': NOTIFY_TOKEN}, method='POST')
-        try:
-            with runtime.urlopen(r, timeout=180) as resp:
-                saved = runtime.json.loads(resp.read().decode() or '{}')
-        except runtime.HTTPError as e:
-            raise runtime.HTTPException(e.code if e.code >= 400 else 502, e.read().decode()[:200]) from e
-        if not saved.get('ok'):
-            raise runtime.HTTPException(502, 'drive save failed')
+        runtime._drive_http_save({'path': path, 'b64': base64.b64encode(blob).decode('ascii')})
     try:
         _save(dest, pdf)
     except runtime.HTTPException as e:

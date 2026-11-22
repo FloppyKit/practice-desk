@@ -23,4 +23,4 @@ Example hosts, the host label, and the example time zone come from `app/booking/
 
 Config for a real clinic (event types, practice profile, secrets) is mounted at deploy time. This tree ships example hosts on `example.com` and empty secret fields.
 
-Chart files go through the notify service (`/drive/mkdir`, `/drive/list`) described in `docs/DRIVE_CHOICE.md`. Proton Drive is the default shape. Google Drive and Nextcloud are not chart backends in this tree.
+Chart files use one pipe: mkdir, list, read, save, share. `CHART_BACKEND` picks it. `proton` (the default) calls the notify bridge. `gdrive` and `nextcloud` answer those same calls in-process. Paths stay `/Clients/...`. See `docs/DRIVE_CHOICE.md`. A missing credential is an error, not an empty success.

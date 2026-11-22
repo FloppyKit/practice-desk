@@ -1372,6 +1372,12 @@ def _last_note_listing(vn_path: str) -> dict[str, Any]:
     return {'ok': True, 'status': 'file', 'name': name, 'path': vn_path + '/' + name, 'hint': name, 'count': len(items)}
 
 def _drive_mkdir(path: str) -> None:
+    from app.infra.chart_store import ChartError, local_mkdir
+    try:
+        if local_mkdir(path):
+            return
+    except ChartError as e:
+        raise HTTPException(e.status if e.status >= 400 else 502, str(e)[:200]) from e
     from app.messaging.notify import NOTIFY_TOKEN
     payload = json.dumps({'path': path}).encode()
     req = UrlRequest(_notify_base() + '/drive/mkdir', data=payload, headers={'Content-Type': 'application/json', 'X-Notify-Token': NOTIFY_TOKEN}, method='POST')
@@ -1453,6 +1459,10 @@ def _notify_base() -> str:
     return raw[:-7] if raw.endswith('/notify') else raw.rstrip('/')
 
 def _notify_get(path: str) -> tuple[int, bytes, str]:
+    from app.infra.chart_store import local_get
+    local = local_get(path)
+    if local is not None:
+        return local
     from app.messaging.notify import NOTIFY_TOKEN
     url = _notify_base() + path
     req = UrlRequest(url, headers={'X-Notify-Token': NOTIFY_TOKEN}, method='GET')
@@ -1464,6 +1474,10 @@ def _notify_get(path: str) -> tuple[int, bytes, str]:
         return (e.code, e.read(), 'application/json')
 
 def _notify_post(path: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    from app.infra.chart_store import local_post
+    local = local_post(path, payload)
+    if local is not None:
+        return local
     from app.messaging.notify import NOTIFY_TOKEN
     data = json.dumps(payload).encode()
     req = UrlRequest(_notify_base() + path, data=data, headers={'Content-Type': 'application/json', 'X-Notify-Token': NOTIFY_TOKEN}, method='POST')
@@ -1476,6 +1490,27 @@ def _notify_post(path: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any
         except Exception:
             body = {'ok': False, 'error': 'notify failed'}
         return (e.code if e.code >= 400 else 502, body)
+
+def _drive_http_save(payload: dict[str, Any]) -> dict[str, Any]:
+    """Save bytes on the chart pipe. Proton still uses the notify bridge. Other backends do not."""
+    from app.infra.chart_store import local_post
+    local = local_post('/drive/save', payload)
+    if local is not None:
+        (code, body) = local
+        if code >= 400 or not body.get('ok'):
+            raise HTTPException(code if code >= 400 else 502, str(body.get('error') or 'drive save failed')[:200])
+        return body
+    from app.messaging.notify import NOTIFY_TOKEN
+    data = json.dumps(payload).encode()
+    req = UrlRequest(_notify_base() + '/drive/save', data=data, headers={'Content-Type': 'application/json', 'X-Notify-Token': NOTIFY_TOKEN}, method='POST')
+    try:
+        with urlopen(req, timeout=180) as resp:
+            saved = json.loads(resp.read().decode() or '{}')
+    except HTTPError as e:
+        raise HTTPException(e.code if e.code >= 400 else 502, e.read().decode()[:200]) from e
+    if not saved.get('ok'):
+        raise HTTPException(502, 'drive save failed')
+    return saved
 
 class MailReplyFile(BaseModel):
     name: str = 'file'

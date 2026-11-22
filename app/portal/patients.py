@@ -1,6 +1,7 @@
 """Client phone book — on-box SQLite. No notes. No PHI in logs."""
 from __future__ import annotations
 
+import os
 import re
 from datetime import datetime
 from typing import Any
@@ -10,20 +11,31 @@ import app.infra.clients_db as clients_db
 from app.booking.practice_links import short_host
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-FOLDER_HOSTS = {short_host(), "drive.proton.me"}
+FOLDER_HOSTS = {short_host(), "drive.proton.me", "drive.google.com", "docs.google.com"}
+
+
+def folder_hosts() -> set[str]:
+    """Hosts a chart link may use. Nextcloud's host comes from NEXTCLOUD_URL."""
+    hosts = set(FOLDER_HOSTS)
+    raw = (os.environ.get("NEXTCLOUD_URL") or "").strip()
+    host = urlparse(raw).netloc.lower() if raw else ""
+    if host:
+        hosts.add(host)
+    return hosts
 
 
 def folder_url(short: str = "", long: str = "") -> str:
-    """Share a link that opens. Prefer the Drive URL.
+    """Share a link that opens. Prefer the chart URL.
 
     Short links on the configured short host are accepted only when that host
     is the one in the link. Never invent a path. Only known hosts.
     """
+    hosts = folder_hosts()
     for raw in (long, short):
         u = (raw or "").strip()
         if not u.startswith("https://"):
             continue
-        if urlparse(u).netloc.lower() in FOLDER_HOSTS:
+        if urlparse(u).netloc.lower() in hosts:
             return u
     return ""
 

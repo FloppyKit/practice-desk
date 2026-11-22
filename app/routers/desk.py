@@ -418,7 +418,8 @@ def api_desk_meta():
     """Staff links — office + guest waiting room."""
     runtime._require_staff()
     runtime._warm_client_window()
-    resp = {'ok': True, 'office_url': runtime.os.environ.get('LIVEKIT_OFFICE_URL', '').strip(), 'guest_url': runtime.os.environ.get('LIVEKIT_GUEST_URL', runtime.video_url()).strip(), 'agent': True, 'drive': True, 'practice': True, 'superbill': True, 'vault_key': runtime.os.environ.get('DESK_VAULT_SECRET') or runtime.REMIND_SECRET}
+    from app.infra.chart_store import backend_name
+    resp = {'ok': True, 'office_url': runtime.os.environ.get('LIVEKIT_OFFICE_URL', '').strip(), 'guest_url': runtime.os.environ.get('LIVEKIT_GUEST_URL', runtime.video_url()).strip(), 'agent': True, 'drive': True, 'chart_backend': backend_name(), 'practice': True, 'superbill': True, 'vault_key': runtime.os.environ.get('DESK_VAULT_SECRET') or runtime.REMIND_SECRET}
     prev = runtime.os.environ.get('DESK_VAULT_SECRET_PREV', '').strip()
     if prev:
         resp['vault_key_prev'] = prev
@@ -445,16 +446,9 @@ def api_desk_drive_file(path: str=runtime.Query(default='')):
     return Response(content=body, media_type=ctype or 'application/octet-stream', headers={'Content-Disposition': f'inline; filename="{name}"'})
 
 def api_desk_drive_save(req: runtime.DriveSaveRequest):
-    """Overwrite a text file on Proton Drive (RAM upload)."""
+    """Overwrite a text file on the chart store (RAM upload)."""
     runtime._require_staff_or_host()
-    from app.messaging.notify import NOTIFY_TOKEN
-    payload = runtime.json.dumps({'path': req.path, 'text': req.text, 'b64': req.b64}).encode()
-    r = runtime.UrlRequest(runtime._notify_base() + '/drive/save', data=payload, headers={'Content-Type': 'application/json', 'X-Notify-Token': NOTIFY_TOKEN}, method='POST')
-    try:
-        with runtime.urlopen(r, timeout=180) as resp:
-            return runtime.json.loads(resp.read().decode() or '{}')
-    except runtime.HTTPError as e:
-        raise runtime.HTTPException(e.code if e.code >= 400 else 502, e.read().decode()[:200]) from e
+    return runtime._drive_http_save({'path': req.path, 'text': req.text, 'b64': req.b64})
 
 def api_desk_drive_share(req: runtime.DriveShareRequest):
     """Create a Proton file share (cloak via Shlink when set) and send email and/or SMS."""
@@ -496,7 +490,8 @@ def api_desk_drive_share(req: runtime.DriveShareRequest):
         first = (name or 'there').split()[0]
         sms = send_sms(phone, f'Hi {first}, a file is ready from the practice: {url} — {runtime.HOST_SHORT}', kind='file', source='desk', template='file')
     ok = bool(mail.get('ok') or sms.get('ok'))
-    return {'ok': ok, 'cloaked': cloaked, 'kind': 'cloak' if cloaked else 'proton', 'email': {'ok': bool(mail.get('ok')), 'skipped': bool(mail.get('skipped')), 'detail': mail.get('detail') or ''}, 'sms': {'ok': bool(sms.get('ok')), 'queued': bool(sms.get('queued')), 'skipped': bool(sms.get('skipped')), 'detail': sms.get('detail') or ''}}
+    from app.infra.chart_store import backend_name
+    return {'ok': ok, 'cloaked': cloaked, 'kind': 'cloak' if cloaked else backend_name(), 'email': {'ok': bool(mail.get('ok')), 'skipped': bool(mail.get('skipped')), 'detail': mail.get('detail') or ''}, 'sms': {'ok': bool(sms.get('ok')), 'queued': bool(sms.get('queued')), 'skipped': bool(sms.get('skipped')), 'detail': sms.get('detail') or ''}}
 
 def api_desk_agent(req: runtime.DeskAgentRequest, background_tasks: runtime.BackgroundTasks, secret: str=runtime.Query(default='')):
     """Pa (Bedrock Nova Pro): look up, create, send forms/mail, book."""

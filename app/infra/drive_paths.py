@@ -1,4 +1,4 @@
-"""Resolve a client to an existing Proton Drive folder. Do not invent names."""
+"""Resolve a client to an existing chart folder. Do not invent names. Paths are the same on every backend."""
 from __future__ import annotations
 
 import re
