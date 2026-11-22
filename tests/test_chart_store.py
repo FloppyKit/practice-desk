@@ -36,7 +36,7 @@ class FakeDrive:
 
     def list(self, **kw):
         parent = self._parent_from_q(kw["q"])
-        rows = [n for n in self.nodes.values() if n["parent"] == parent]
+        rows = [n for n in self.nodes.values() if n["parent"] == parent and not n.get("trashed")]
         files = [{
             "id": n["id"], "name": n["name"], "mimeType": n["mime"],
             "modifiedTime": "2026-01-02T00:00:00Z",
@@ -64,9 +64,17 @@ class FakeDrive:
         return _Call(self.nodes[fileId]["data"])
 
     def get(self, fileId, **_kw):
-        node = self.nodes[fileId]
+        node = self.nodes.get(fileId)
+        if node is None:
+            missing = type("HttpError", (Exception,), {})("missing")
+            missing.resp = type("Resp", (), {"status": 404})()
+            raise missing
         return _Call({
+            "id": node["id"],
+            "name": node["name"],
             "mimeType": node["mime"],
+            "trashed": bool(node.get("trashed")),
+            "parents": [node["parent"]],
             "webViewLink": "https://drive.google.com/file/d/" + fileId + "/view",
         })
 
@@ -125,11 +133,22 @@ class FakeCloud:
             parent = chart.rsplit("/", 1)[0] or "/"
             if parent not in self.folders:
                 return 409, b"parent", ""
+            if chart in self.files and chart not in self.folders:
+                return 405, b"file", ""
             if chart in self.folders:
                 return 405, b"exists", ""
             self.folders.add(chart)
             return 201, b"", ""
         if method == "PROPFIND":
+            if chart in self.files and chart not in self.folders:
+                href = "/remote.php/dav/files/ada" + chart
+                xml = (
+                    "<?xml version='1.0'?><d:multistatus xmlns:d='DAV:'>"
+                    f"<d:response><d:href>{escape(href)}</d:href><d:propstat><d:prop>"
+                    "<d:resourcetype></d:resourcetype>"
+                    "</d:prop></d:propstat></d:response></d:multistatus>"
+                )
+                return 207, xml.encode(), "application/xml"
             if chart != "/" and chart not in self.folders:
                 return 404, b"", ""
             return 207, self._xml(chart), "application/xml"
@@ -333,3 +352,189 @@ def test_runtime_list_does_not_call_the_notify_bridge() -> None:
         gdrive_store.drive_service = old_svc
         runtime.urlopen = old_open
         gdrive_store.clear_cache()
+
+
+def test_unset_backend_saves_through_the_notify_bridge() -> None:
+    import app.runtime as runtime
+    from app.messaging.notify import NOTIFY_TOKEN
+
+    seen: dict[str, object] = {}
+
+    class _Resp:
+        status = 200
+
+        def read(self):
+            return b'{"ok": true, "path": "/Clients/a.txt"}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    def _open(req, timeout=0):
+        seen["url"] = req.full_url
+        seen["timeout"] = timeout
+        seen["data"] = req.data
+        seen["token"] = req.get_header("X-notify-token")
+        return _Resp()
+
+    old = runtime.urlopen
+    runtime.urlopen = _open
+    try:
+        with _env(CHART_BACKEND=None):
+            saved = runtime._drive_http_save({"path": "/Clients/a.txt", "text": "hi"})
+            assert saved.get("ok") is True
+            assert str(seen["url"]).endswith("/drive/save")
+            assert seen["timeout"] == 180
+            assert seen["token"] == NOTIFY_TOKEN
+            assert b"/Clients/a.txt" in seen["data"]
+    finally:
+        runtime.urlopen = old
+
+
+def test_gdrive_dead_server_is_502() -> None:
+    class _Dead:
+        def files(self):
+            return self
+
+        def list(self, **_kw):
+            return self
+
+        def execute(self):
+            raise type("HttpError", (Exception,), {})("down")
+
+    gdrive_store.clear_cache()
+    old = gdrive_store.drive_service
+    gdrive_store.drive_service = lambda: _Dead()
+    try:
+        with _env(CHART_BACKEND="gdrive", GOOGLE_DRIVE_ROOT_ID="root", GOOGLE_DRIVE_SA_FILE="/not/used"):
+            saved = local_post("/drive/save", {"path": "/Clients/a.txt", "text": "x"})
+            assert saved is not None and saved[0] == 502 and saved[1]["ok"] is False
+            assert "reachable" in saved[1]["error"]
+    finally:
+        gdrive_store.drive_service = old
+        gdrive_store.clear_cache()
+
+
+def test_gdrive_bad_account_file_is_502() -> None:
+    import tempfile
+
+    gdrive_store.clear_cache()
+    handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+    handle.write("{")
+    handle.close()
+    try:
+        with _env(CHART_BACKEND="gdrive", GOOGLE_DRIVE_ROOT_ID="root", GOOGLE_DRIVE_SA_FILE=handle.name):
+            try:
+                local_mkdir("/Clients")
+            except ChartError as exc:
+                assert exc.status == 502
+                assert "not valid" in str(exc)
+            else:
+                raise AssertionError("a bad account file was accepted")
+    finally:
+        os.unlink(handle.name)
+        gdrive_store.clear_cache()
+
+
+def test_gdrive_save_rechecks_a_cached_folder() -> None:
+    fake = FakeDrive()
+    gdrive_store.clear_cache()
+    old = gdrive_store.drive_service
+    gdrive_store.drive_service = lambda: fake
+    try:
+        with _env(CHART_BACKEND="gdrive", GOOGLE_DRIVE_ROOT_ID="root", GOOGLE_DRIVE_SA_FILE="/not/used"):
+            assert local_mkdir("/Clients/Patient") is True
+            patient = next(node for node in fake.nodes.values() if node["name"] == "Patient")
+            patient["trashed"] = True
+            before = len(fake.nodes)
+            saved = local_post("/drive/save", {"path": "/Clients/Patient/a.txt", "text": "nope"})
+            assert saved is not None and saved[0] == 404 and "parent" in saved[1]["error"]
+            assert len(fake.nodes) == before
+            patient["trashed"] = False
+            patient["name"] = "Patient-old"
+            renamed = local_post("/drive/save", {"path": "/Clients/Patient/a.txt", "text": "nope"})
+            assert renamed is not None and renamed[0] == 404 and "parent" in renamed[1]["error"]
+            assert not any(node["name"] == "a.txt" for node in fake.nodes.values())
+    finally:
+        gdrive_store.drive_service = old
+        gdrive_store.clear_cache()
+
+
+def test_nextcloud_dead_server_is_502() -> None:
+    import urllib.error
+
+    def _dead(*_args, **_kwargs):
+        raise urllib.error.URLError("timed out")
+
+    old = nextcloud_store._request
+    nextcloud_store._request = _dead
+    try:
+        with _env(
+            CHART_BACKEND="nextcloud",
+            NEXTCLOUD_URL="https://cloud.example.test",
+            NEXTCLOUD_USER="ada",
+            NEXTCLOUD_APP_PASSWORD="test-app-pw",
+        ):
+            try:
+                local_mkdir("/Clients")
+            except ChartError as exc:
+                assert exc.status == 502
+                assert "reachable" in str(exc)
+                assert "test-app-pw" not in str(exc)
+            else:
+                raise AssertionError("a dead Nextcloud server was treated as success")
+            saved = local_post("/drive/save", {"path": "/Clients/a.txt", "text": "x"})
+            assert saved is not None and saved[0] == 502 and saved[1]["ok"] is False
+    finally:
+        nextcloud_store._request = old
+
+
+def test_nextcloud_405_is_a_folder_only_when_it_is_a_folder() -> None:
+    fake = FakeCloud()
+    old = nextcloud_store._request
+    nextcloud_store._request = fake
+    try:
+        with _env(
+            CHART_BACKEND="nextcloud",
+            NEXTCLOUD_URL="https://cloud.example.test",
+            NEXTCLOUD_USER="ada",
+            NEXTCLOUD_APP_PASSWORD="test-app-pw",
+        ):
+            assert local_mkdir("/Clients/Ok") is True
+            assert local_mkdir("/Clients/Ok") is True
+            fake.files["/Clients/note.txt"] = b"taken"
+            try:
+                local_mkdir("/Clients/note.txt")
+            except ChartError as exc:
+                assert exc.status == 409
+                assert "folder" in str(exc)
+            else:
+                raise AssertionError("a file was treated as an existing folder")
+    finally:
+        nextcloud_store._request = old
+
+
+def test_bad_backend_is_a_clean_failure_on_the_desk_status() -> None:
+    import app.runtime as runtime
+    from app.routers.desk import api_desk_meta
+
+    old_staff = runtime._require_staff
+    old_warm = runtime._warm_client_window
+    runtime._require_staff = lambda *_a, **_k: None
+    runtime._warm_client_window = lambda *_a, **_k: None
+    try:
+        with _env(CHART_BACKEND="dropbox"):
+            try:
+                api_desk_meta()
+            except runtime.HTTPException as exc:
+                assert exc.status_code == 502
+                assert "proton" in str(exc.detail)
+            else:
+                raise AssertionError("a bad backend did not fail the desk status")
+            code, body, _ctype = runtime._notify_get("/drive/list?path=/Clients")
+            assert code == 502 and b"proton" in body
+    finally:
+        runtime._require_staff = old_staff
+        runtime._warm_client_window = old_warm
