@@ -10,7 +10,7 @@ app/
 app/http/
   shapes.py               Request bodies.
   signin.py               Staff and host sign-in checks.
-  page_paint.py           Fill a public page and return it.
+  page_paint.py           Fill a public page. The booking sentence uses the visit type and the practice name.
 
 app/infra/
   chart_store.py          Pick proton, Google Drive, or Nextcloud. Same mkdir/list/read/save/share calls.
@@ -103,10 +103,10 @@ app/data/
 
 static/
   desk.html               Staff desk. Week, notes, practice, billing, mail, and refills stay on this page.
-  book.html               Public booking page.
-  index.html              Public front door.
-  new-client.html         New-client page.
-  follow-up.html          Follow-up page.
+  book.html               Public booking page. Routes fill the sentence from the visit type.
+  index.html              Unused front-door snapshot. The hub redirects to /new-client.
+  new-client.html         Unused snapshot. /new-client serves book.html.
+  follow-up.html          Unused snapshot. /follow-up serves book.html.
   thanks.html             After-booking page.
   css/booker.css          Public booker styles.
   js/booker.js            Public slot picker.

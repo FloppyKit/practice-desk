@@ -45,7 +45,54 @@ def _page(name: str, cache: bool=True):
         return Response(content=runtime._paint_page(path.read_text(encoding='utf-8')), media_type='text/html; charset=utf-8', headers=headers)
     return FileResponse(path, headers=headers)
 
-_BOOK_DESCRIPTIONS = {'new-client': 'Book a new-patient video evaluation (about 90–100 minutes, $600) with Example Clinician, DO, MBA. Times are shown in Central Time.', 'follow-up': 'Book a follow-up video visit with Example Clinician, DO, MBA (current patients). Times are shown in Central Time.'}
+def _clinician_label() -> str:
+    """Practice profile name, or the example host label when the profile is blank."""
+    try:
+        from app.infra.practice import load as load_practice
+        profile = load_practice()
+    except Exception:
+        profile = {}
+    name = str(profile.get('clinician_name') or '').strip()
+    title = str(profile.get('clinician_title') or '').strip()
+    if name and title:
+        return name + ', ' + title
+    if name:
+        return name
+    return HOST_SHORT
+
+def _priced_parts(et: dict) -> list[tuple[int, str]]:
+    parts: list[tuple[int, str]] = []
+    for dur in runtime._durations(et):
+        parts.append((int(dur), runtime._price_label(et, dur)))
+    return parts
+
+def _book_lead(et: dict | None) -> str:
+    if not et:
+        return 'Choose a length, then a day and time.'
+    parts = _priced_parts(et)
+    if len(parts) == 1:
+        dur, fee = parts[0]
+        text = f'About {dur} minutes'
+        if fee:
+            text += ' · ' + fee
+        return text
+    if parts:
+        bits = [f'{dur} min' + (f' {fee}' if fee else '') for dur, fee in parts]
+        return 'Choose a length (' + ' or '.join(bits) + '), then a day and time.'
+    return 'Choose a length, then a day and time.'
+
+def _book_blurb(title: str, et: dict | None, zone: str) -> str:
+    """Sentence for the booking page. A visit-type description wins; else fee plus profile name."""
+    who = _clinician_label()
+    if et:
+        custom = str(et.get('description') or '').strip()
+        if custom:
+            return custom
+        parts = _priced_parts(et)
+        if parts:
+            bits = [f'{dur} min, {fee}' if fee else f'{dur} min' for dur, fee in parts]
+            return f'Book a {title} ({" or ".join(bits)}) with {who}. Times are shown in {zone}.'
+    return f'Book a {title} with {who} by secure video. Times are shown in {zone}.'
 
 def _book_page(slug: str) -> HTMLResponse:
     """book.html with the visit title, meta description and JSON-LD rendered on the server (JS still hydrates the rest)."""
@@ -54,15 +101,21 @@ def _book_page(slug: str) -> HTMLResponse:
     if not path.exists():
         raise HTTPException(404)
     raw = path.read_text(encoding='utf-8')
-    et = get_event_type(load_config(), slug) if slug else None
+    cfg = load_config() if slug else {}
+    et = get_event_type(cfg, slug) if slug else None
     title = str((et or {}).get('title') or 'Book a visit').strip() or 'Book a visit'
-    desc = _BOOK_DESCRIPTIONS.get(slug, f'Book a {title.lower()} with {HOST_SHORT} by secure video. Times are shown in Central Time.')
+    zone = str((cfg or {}).get('timezone') or timezone_name())
+    desc = _book_blurb(title, et, zone)
     page_url = f'{book_url()}/{slug}' if slug else book_url() + '/'
     ld = {'@context': 'https://schema.org', '@type': 'WebPage', '@id': page_url + '#webpage', 'url': page_url, 'name': f'{title} · {HOST_SHORT}', 'description': desc, 'inLanguage': 'en-US', 'isPartOf': {'@id': site_url() + '/#website'}, 'about': {'@id': site_url() + '/#practice'}, 'provider': {'@type': ['MedicalBusiness', 'MedicalOrganization'], '@id': site_url() + '/#practice', 'name': HOST_SHORT, 'url': site_url(), 'telephone': '+1-' + HOST_PHONE}, 'potentialAction': {'@type': 'ReserveAction', 'target': page_url}}
     ld_json = json.dumps(ld).replace('<', '\\u003c')
     head_extra = f'  <meta name="description" content="{_html.escape(desc)}" />\n  <link rel="canonical" href="{_html.escape(page_url)}" />\n  <script type="application/ld+json">{ld_json}</script>\n'
     out = raw.replace('<title>Book · ' + HOST_SHORT + '</title>', f'<title>{_html.escape(title)} · {HOST_SHORT}</title>', 1)
     out = out.replace('<h1 id="book-title">Book a visit</h1>', f'<h1 id="book-title">{_html.escape(title)}</h1>', 1)
+    lead = _html.escape(_book_lead(et), quote=True)
+    out = out.replace('id="book-lead">Choose a length, then a day and time.', 'id="book-lead">' + lead, 1)
+    shown = _html.escape(_book_lead(et) + ' · ' + zone, quote=True)
+    out = out.replace('id="times-sub">Times appear after you pick a length.', 'id="times-sub">' + shown, 1)
     out = out.replace('</head>', head_extra + '</head>', 1)
     if slug == 'follow-up':
         start = out.find('<label class="check">')

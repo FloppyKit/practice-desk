@@ -1049,7 +1049,6 @@ from app.billing.helpers import (
     _fee_cents,
 )
 from app.http.page_paint import (
-    _BOOK_DESCRIPTIONS,
     _C_PAGE,
     _NO_INDEX,
     _book_page,

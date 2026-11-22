@@ -27,8 +27,8 @@
 <h1>Follow-up visit</h1>
       <p class="brand-lead">Choose a length, then a day and time.</p>
       <div class="fee-chart" aria-label="Visit fees">
-        <span class="fee-item"><span class="fee-len">30 min</span> <span class="fee-amt">$265</span></span>
-        <span class="fee-item"><span class="fee-len">60 min</span> <span class="fee-amt">$420</span></span>
+        <span class="fee-item"><span class="fee-len">30 min</span> <span class="fee-amt">$100</span></span>
+        <span class="fee-item"><span class="fee-len">60 min</span> <span class="fee-amt">$160</span></span>
       </div>
       <p class="loc-line"><strong>Location:</strong> Video visit · <a href="https://meet.example.com/guest">meet.example.com/guest</a></p>
       </div>
@@ -40,8 +40,8 @@
       <div class="duration-bar">
         <span class="duration-bar-label">Visit length</span>
         <div class="seg" id="duration" role="group" aria-label="Visit length">
-          <button type="button" data-duration="30" data-price="$265" class="active" aria-pressed="true">30 min</button>
-          <button type="button" data-duration="60" data-price="$420" aria-pressed="false">60 min</button>
+          <button type="button" data-duration="30" data-price="$100" class="active" aria-pressed="true">30 min</button>
+          <button type="button" data-duration="60" data-price="$160" aria-pressed="false">60 min</button>
         </div>
       </div>
 
@@ -59,7 +59,7 @@
         </div>
         <div class="times-panel">
           <div class="times-header" id="times-header">Select a date</div>
-          <p class="times-sub" id="times-sub">30-min · $265 · Central Time</p>
+          <p class="times-sub" id="times-sub">30-min · $100 · Central Time</p>
           <div id="slots" class="slots" role="group" aria-label="Available times"></div>
         </div>
       </div>
@@ -180,7 +180,7 @@
   <script src="/static/js/cipher-booker.js?v=1"></script>
   <script type="module">
     import { initBooker } from "/static/js/booker.js?v=fu-cloak2";
-    initBooker({ type: "follow-up", title: "Follow-up visit", defaultDuration: 30, prices: { 30: "$265", 60: "$420" }, location: "Video · meet.example.com/guest" });
+    initBooker({ type: "follow-up", title: "Follow-up visit", defaultDuration: 30, prices: { 30: "$100", 60: "$160" }, location: "Video · meet.example.com/guest" });
   </script>
 </body>
 </html>
