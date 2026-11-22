@@ -19,6 +19,20 @@ def test_ipad_defaults_notes_tabs7_defaults_office() -> None:
     r = subprocess.run(['node', '-e', script], cwd=ROOT, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr or r.stdout or 'node layout detect failed'
 
+def test_file_browser_names_the_chart_backend() -> None:
+    html = DESK.read_text(encoding='utf-8')
+    assert 'function chartStoreName' in html
+    assert 'window.__chartBackend = meta.chart_backend' in html
+    assert 'id="files-pop-kicker"' in html
+    assert '/static/js/chart-drive.js' in html
+    assert 'proton-drive.js' not in html
+    js = (ROOT / 'static' / 'js' / 'chart-drive.js').read_text(encoding='utf-8')
+    assert 'function storeName' in js
+    assert 'Proton Drive' not in js
+    sw = (ROOT / 'static' / 'js' / 'desk-sw.js').read_text(encoding='utf-8')
+    assert '/static/js/chart-drive.js' in sw
+    assert 'proton-drive.js' not in sw
+
 def test_desk_html_tablet_shell() -> None:
     html = DESK.read_text(encoding='utf-8')
     for needle in ('id="layout-notes"', 'id="layout-office"', 'id="banner-unlock"', 'id="this-week"', 'id="office-placeholder"', 'id="office-join-placeholder"', 'desk-layout.js', 'desk-layout-notes', 'desk-layout-office', 'min-width:44px', 'html.desk-touch #this-week', 'desk-icon-label', 'Join from this tablet', 'Notes stay on the other device', 'viewport-fit=cover'):

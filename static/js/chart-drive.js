@@ -1,5 +1,5 @@
 /**
- * Compact Proton Drive browser + preview.
+ * Compact chart-file browser + preview. The label follows chart_backend.
  * Auth: desk secret OR LiveKit host-link secret (office already logged in).
  */
 (function () {
@@ -16,6 +16,13 @@
     if (s) headers["X-Staff-Secret"] = s;
     opts.headers = headers;
     return fetch(url, opts);
+  }
+  function storeName() {
+    var raw = String(window.__chartBackend || "").toLowerCase();
+    if (raw === "gdrive" || raw === "google" || raw === "google-drive" || raw === "google_drive") return "Google Drive";
+    if (raw === "nextcloud") return "Nextcloud";
+    if (raw === "proton") return "Proton";
+    return "the chart";
   }
   function secret() {
     if (cfg.hostSecret) return cfg.hostSecret;
@@ -169,7 +176,7 @@
         if (x.d && x.d.sms && x.d.sms.detail && !x.d.sms.ok && !x.d.sms.skipped)
           bits.push("SMS: " + x.d.sms.detail);
         if (x.ok) {
-          bits.push(x.d.cloaked ? "cloaked link" : "Proton link");
+          bits.push(x.d.cloaked ? "cloaked link" : storeName() + " link");
           status.textContent = bits.join(" · ");
         } else {
           status.textContent = (x.d && (x.d.detail || x.d.error)) || bits.join(" · ") || "Share failed";
@@ -321,7 +328,7 @@
           body.appendChild(fr);
           var n = document.createElement("p");
           n.className = "note";
-          n.textContent = "PDF preview — edit in a full editor, then re-upload from Proton if needed.";
+          n.textContent = "PDF preview — edit in a full editor, then re-upload from " + storeName() + " if needed.";
           body.appendChild(n);
         } else if (x.k === "image") {
           prevUrl = URL.createObjectURL(x.b);

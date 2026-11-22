@@ -160,7 +160,12 @@ def api_desk_note_drive_prior(client_id: str=runtime.Query(default=''), event_id
     name = str(picked.get('name') or '')
     (code, blob, _ctype) = runtime._notify_get('/drive/file?path=' + quote(vn + '/' + name, safe='/'))
     if code != 200 or not blob:
-        return {'ok': False, 'detail': 'could not read the note from Proton Drive'}
+        from app.infra.chart_store import ChartError, backend_name
+        try:
+            label = {'proton': 'Proton Drive', 'gdrive': 'Google Drive', 'nextcloud': 'Nextcloud'}.get(backend_name(), 'the chart')
+        except ChartError:
+            label = 'the chart'
+        return {'ok': False, 'detail': f'could not read the note from {label}'}
     text = text_of(name, blob)
     fields = parse_note_text(text)
     from app.notes.note_pdf import reflow_body

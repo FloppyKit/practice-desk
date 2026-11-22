@@ -1324,7 +1324,7 @@
   <div id="files-pop" class="book-pop" hidden role="dialog" aria-modal="true" aria-label="Practice files">
     <div class="book-pop-top">
       <div>
-        <div class="book-pop-kicker">Proton Drive</div>
+        <div class="book-pop-kicker" id="files-pop-kicker">Chart</div>
         <p class="book-pop-time" id="files-pop-title">Practice files</p>
       </div>
       <button type="button" class="book-pop-close" id="files-close" aria-label="Close">×</button>
@@ -5382,9 +5382,9 @@
         pre = (dj.prior && dj.prior.fields) || {};
         if (dj.meet_again) pre.return_visit = dj.meet_again;
         priorLabel = dj.prior ? (dj.prior.dos || dj.prior.name || "last note") : "";
-        if (!dj.prior && $("note-status")) $("note-status").textContent = "No note in Visit notes on Proton Drive yet.";
+        if (!dj.prior && $("note-status")) $("note-status").textContent = "No note in Visit notes on " + chartStoreName() + " yet.";
       } catch (e) {
-        if ($("note-status")) $("note-status").textContent = "Could not read Proton Drive.";
+        if ($("note-status")) $("note-status").textContent = "Could not read " + chartStoreName() + ".";
       }
       if (epoch != null && !noteLive(epoch)) return;
       Object.keys(pre).forEach((k) => { if (k !== "dos" && pre[k]) noteBag[k] = pre[k]; });
@@ -5400,7 +5400,7 @@
       }
       if (window.__scribePending) await finishScribeDraft(window.__scribePending);
       if (Object.keys(carried).length) {
-        $("nt-carry-label").textContent = "Prefilled from Proton Drive · " + (priorLabel || "last note") + " — this visit's transcript is applied when it is linked";
+        $("nt-carry-label").textContent = "Prefilled from " + chartStoreName() + " · " + (priorLabel || "last note") + " — this visit's transcript is applied when it is linked";
         $("nt-carry").hidden = false;
       }
       noteCoverage = data.coverage || null;
@@ -5910,6 +5910,14 @@
       };
     }
 
+    function chartStoreName() {
+      const raw = String(window.__chartBackend || "").toLowerCase();
+      if (raw === "gdrive" || raw === "google" || raw === "google-drive" || raw === "google_drive") return "Google Drive";
+      if (raw === "nextcloud") return "Nextcloud";
+      if (raw === "proton") return "Proton Drive";
+      return "the chart";
+    }
+
     async function load() {
       let meta;
       try {
@@ -5920,6 +5928,8 @@
         try { window.dispatchEvent(new Event("pd-desk-unlocked")); } catch (e) {}
         msg("Loading…", true);
         meta = await res.json();
+        window.__chartBackend = meta.chart_backend || "";
+        if ($("files-pop-kicker")) $("files-pop-kicker").textContent = chartStoreName();
       } catch (e) {
         msg("Unlock failed: network.");
         openUnlock();
@@ -6107,7 +6117,7 @@
   <script src="/static/js/desk-call.js?v=4"></script>
   <script src="/static/js/pa-router.js?v=2"></script>
   <script src="/static/js/staff-agent.js?v=6"></script>
-  <script src="/static/js/proton-drive.js?v=10"></script>
+  <script src="/static/js/chart-drive.js?v=11"></script>
 <script>
 /* deskfix11: office clock (In call + CT time) and Text opt-outs list */
 (function () {
