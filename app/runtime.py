@@ -204,30 +204,7 @@ def _client_for_booking(email: str, phone: str='', name: str='') -> dict[str, An
             return r
     return rows[0]
 
-class BookRequest(BaseModel):
-    event_type: str
-    start: str
-    duration_minutes: int | None = None
-    name: str = Field(min_length=1, max_length=120)
-    email: EmailStr | None = None
-    phone: str = Field(default='', max_length=40)
-    notes: str = Field(default='', max_length=500)
-    sms_consent: bool | None = None
-    notify_emails: str = Field(default='', max_length=400)
-    source: str = Field(default='web', max_length=20)
-    verify_token: str = Field(default='', max_length=800)
-    send_email: bool = True
-    cipher_envelope_id: str = Field(default='', max_length=80)
 
-class VerifyRequest(BaseModel):
-    email: str = ''
-    phone: str = ''
-    full_name: str = ''
-    first_name: str = ''
-    last_name: str = ''
-    dob: str = ''
-    portal: bool = False
-    sms_consent: str = ''
 
 def _durations(et: dict[str, Any]) -> list[int]:
     d = et.get('duration_minutes', 30)
@@ -277,18 +254,8 @@ def _location_line(et: dict[str, Any], cfg: dict[str, Any]) -> str:
 def _ics_response(body: bytes, filename: str, cache: str) -> Response:
     return Response(content=body, media_type='text/calendar; charset=utf-8', headers={'Content-Disposition': f'inline; filename="{filename}"', 'Cache-Control': cache})
 
-class VerifyCodeRequest(BaseModel):
-    email: str = ''
-    phone: str = ''
-    code: str = ''
 
-class AccountsRequest(BaseModel):
-    contact_token: str
 
-class PickAccountRequest(BaseModel):
-    contact_token: str
-    ref: int
-    old_token: str = ''
 PHONE_WINDOW_DAYS = 92
 PHONE_NOTICE_MINUTES = 14 * 60
 
@@ -346,26 +313,8 @@ def _onboarding_fx():
             send_email(to, subject, body)
     return onboarding.Effects(get_event=get_event, patch_event=patch_event, delete_event=delete_event, send_email=send_email, send_sms=send_sms, staff_email=staff, rebook_url=f'{PUBLIC_BASE}/{HOLD_EVENT_TYPE}')
 
-class ChatThreadPost(BaseModel):
-    body: str
-    token: str = ''
-    label: str = ''
-    email: str = ''
-    phone: str = ''
-    hear_back: str = ''
-    sms_consent: bool = False
-    name: str = ''
-    verify_token: str = ''
 
-class SmsBridgeEnqueue(BaseModel):
-    template: str
-    phone: str
-    source: str = 'voice'
-    idempotency_key: str = ''
 
-class SmsBridgeAck(BaseModel):
-    id: str
-    status: str
 
 def _require_bridge(request: Request) -> None:
     if not secret_ok(request.headers.get('x-bridge-secret', '')):
@@ -401,12 +350,7 @@ def _visit_details_from_payload(payload: dict[str, Any]) -> dict[str, str]:
     except Exception:
         return {'title': title or 'Visit', 'when_label': when_label, 'name': name, 'email': email, 'gone': '0'}
 
-class PublicTokenRequest(BaseModel):
-    verify_token: str
 
-class PublicCancelVisitRequest(BaseModel):
-    verify_token: str
-    event_id: str
 
 def _verified_client(token: str) -> dict:
     from app.portal.patients import client_by_id
@@ -439,8 +383,6 @@ def _upload_email(row: dict[str, Any], res: dict[str, Any], blob: bytes, note: s
     except Exception:
         uploads.log(str(row.get('id') or ''), len(blob), str(res.get('kind') or ''), 'email_failed')
 
-class CardLinkRequest(BaseModel):
-    verify_token: str = ''
 
 def _cancel_html(*, token: str='', email: str='', ready: bool=False, done: bool=False, error: str='', note: str='', title: str='', when_label: str='', name: str='', rebook_path: str='/') -> str:
 
@@ -467,96 +409,20 @@ def _cancel_html(*, token: str='', email: str='', ready: bool=False, done: bool=
         body = f'''\n        <p>You are about to cancel the following visit. This removes it from the practice calendar.</p>\n        <p class="meta" style="color:var(--muted);margin-top:8px">To reschedule: cancel here, then book a new time on the next screen.</p>\n        {visit_card or '<p class="meta" style="color:var(--muted)">Linked email: ' + _esc(email or '(on file)') + '</p>'}\n        <form method="post" action="/cancel" class="form" style="margin-top:16px">\n          <input type="hidden" name="token" value="{_esc(token)}" />\n          <button class="btn" type="submit">Yes, cancel this visit</button>\n        </form>\n        <p style="margin-top:14px"><a class="back" href="/">Keep my visit · back to booking</a></p>\n        '''
     return f"""<!doctype html>\n<html lang="en">\n<head>\n  <meta charset="utf-8" />\n  <meta name="viewport" content="width=device-width, initial-scale=1" />\n  <title>{('Visit cancelled' if done else 'Cancel visit')} · {HOST_SHORT}</title>\n  <link rel="stylesheet" href="/static/css/booker.css" />\n  <style>\n    .cancel-row {{ display:flex; gap:12px; margin:6px 0; flex-wrap:wrap; }}\n    .cancel-row .k {{ min-width:4.5rem; color:var(--muted,#666); font-size:0.85rem; }}\n    .cancel-row .v {{ font-weight:600; }}\n    .cancel-row .meta {{ font-weight:400; color:var(--muted,#666); font-size:0.85rem; }}\n  </style>\n</head>\n<body>\n  <div class="wrap">\n    <div class="brand">\n      <div class="kicker">{HOST_SHORT}</div>\n      <h1>{('Visit cancelled' if done else 'Cancel visit')}</h1>\n    </div>\n    <div class="card">\n      {body}\n    </div>\n    <p class="foot">Questions: {HOST_EMAIL} · {HOST_PHONE}</p>\n  </div>\n</body>\n</html>"""
 
-class MailSendRequest(BaseModel):
-    kind: str
-    to: EmailStr
-    name: str = ''
-    title: str = ''
-    url: str = ''
-    amount: str = ''
-    form_name: str = ''
-    notes: str = ''
-    when_label: str = ''
-    duration_minutes: int | None = None
-    start_iso: str = ''
-    rebook_url: str = ''
-    doc_title: str = ''
-    due_date: str = ''
 
-class LateSendRequest(BaseModel):
-    event_id: str
-    calendar_id: str = ''
-    kind: str = 'late_soon'
 
-def _host_secret() -> str:
-    s = os.environ.get('LIVEKIT_HOST_URL_SECRET', '').strip()
-    if s:
-        return s
-    office = os.environ.get('LIVEKIT_OFFICE_URL', '').strip()
-    if '/r/' in office:
-        return office.rstrip('/').split('/r/')[-1]
-    return ''
 
-def _staff_secret(secret: str='', request: Request | None=None) -> str:
-    """x-staff-secret header (cron / server-to-server). The `secret` query/body value is ignored for staff."""
-    return secret_from_request(request or _current_request.get())
 
-def _desk_session_email(request: Request | None=None) -> str:
-    import app.portal.desk_auth as desk_auth
-    req = request or _current_request.get()
-    tok = req.cookies.get(desk_auth.COOKIE, '') if req is not None else ''
-    return desk_auth.check(tok) or ''
 
-def _staff_ok(request: Request | None=None) -> bool:
-    if REMIND_SECRET and hmac.compare_digest(_staff_secret('', request), REMIND_SECRET):
-        return True
-    return bool(_desk_session_email(request))
 
-def _require_staff(secret: str='', request: Request | None=None) -> None:
-    if not _staff_ok(request):
-        raise HTTPException(401, 'unauthorized')
 
-def _require_staff_or_host(secret: str='', request: Request | None=None) -> None:
-    """Desk secret or LiveKit host-link secret (office page)."""
-    if _staff_ok(request):
-        return
-    got = _staff_secret('', request)
-    host = _host_secret()
-    if host and got and hmac.compare_digest(got, host):
-        return
-    raise HTTPException(401, 'unauthorized')
 
-def _desk_cookie_refresh(resp: Response) -> None:
-    """Re-send the session cookie (rolling 90 days) and drop the old raw-secret cookie."""
-    import app.portal.desk_auth as desk_auth
-    req = _current_request.get()
-    tok = req.cookies.get(desk_auth.COOKIE, '') if req is not None else ''
-    if tok and desk_auth.check(tok):
-        _set_desk_cookie(resp, tok)
-    resp.delete_cookie(STAFF_COOKIE, path='/')
 
-def _set_desk_cookie(resp: Response, token: str) -> None:
-    import app.portal.desk_auth as desk_auth
-    resp.set_cookie(desk_auth.COOKIE, token, httponly=True, secure=True, samesite='strict', max_age=desk_auth.SESSION_TTL, path='/')
 
-def _client_ip(request: Request) -> str:
-    fwd = (request.headers.get('x-forwarded-for') or '').split(',')[0].strip()
-    return fwd or (request.client.host if request.client else '')
 
-class DeskAuthEmail(BaseModel):
-    email: str = Field(default='', max_length=200)
 
-class DeskAuthCode(BaseModel):
-    email: str = Field(default='', max_length=200)
-    code: str = Field(default='', max_length=20)
 
-class DeskAuthLegacy(BaseModel):
-    secret: str = Field(default='', max_length=400)
 
-def _set_staff_cookie(resp: Response, secret: str) -> None:
-    if not secret:
-        return
-    resp.set_cookie(STAFF_COOKIE, secret, httponly=True, secure=True, samesite='lax', max_age=60 * 60 * 24 * 30, path='/')
 
 def _event_mail_fields(ev: dict[str, Any], cid: str, tz: ZoneInfo) -> dict[str, Any]:
     priv = (ev.get('extendedProperties') or {}).get('private') or {}
@@ -575,27 +441,7 @@ def _event_mail_fields(ev: dict[str, Any], cid: str, tz: ZoneInfo) -> dict[str, 
     et = priv.get('event_type') or ''
     return {'event_id': ev.get('id') or '', 'calendar_id': cid, 'name': priv.get('patient_name') or '', 'email': priv.get('patient_email') or '', 'phone': priv.get('patient_phone') or '', 'sms_consent': priv.get('sms_consent') == '1', 'title': priv.get('title') or ev.get('summary') or 'Visit', 'event_type': et, 'duration_minutes': duration, 'price_label': priv.get('price_label') or '', 'when_label': start.strftime('%a %b %d · %I:%M %p').replace(' 0', ' ') if start else '', 'start_iso': start.isoformat() if start else '', 'end_iso': end.isoformat() if end else '', 'rebook_url': f'{PUBLIC_BASE}/{et}' if et else PUBLIC_BASE, 'minutes_from_start': round((datetime.now(tz) - start).total_seconds() / 60.0, 1) if start else None}
 
-class DeskBookRequest(BaseModel):
-    event_type: str = 'follow-up'
-    start: str
-    duration_minutes: int | None = None
-    client_id: str = ''
-    name: str = ''
-    email: str = ''
-    phone: str = ''
-    notes: str = ''
-    send_email: bool = True
 
-class DeskSendRequest(BaseModel):
-    item: str = ''
-    items: list[str] = []
-    client_id: str = ''
-    name: str = ''
-    email: str = ''
-    phone: str = ''
-    notes: str = ''
-    duration_minutes: int | None = None
-    send_email: bool = True
 
 def _desk_week_payload(start: str='', days: int=7) -> dict[str, Any]:
     """Week of calendar events for the staff board (all events, not only booker)."""
@@ -661,10 +507,6 @@ def _attach_intake(visits: list[dict[str, Any]]) -> None:
     except Exception:
         return
 
-class InternalIntakeRequest(BaseModel):
-    form: str
-    fields: dict[str, Any] = Field(default_factory=dict)
-    meta: dict[str, Any] = Field(default_factory=dict)
 INTAKE_FORMS = ('personal', 'consents', 'card-auth', 'roi')
 
 def _chart_for(row: dict[str, Any]) -> str:
@@ -753,19 +595,7 @@ def _check_client_bg(client_id: str) -> list[str]:
         print('hold_check_fail', type(e).__name__, flush=True)
         return []
 
-class HoldTimesRequest(BaseModel):
-    deadline_minutes: float
-    remind_minutes: float | None = None
 
-class InternalCardRequest(BaseModel):
-    client_id: str = ''
-    email: str = ''
-    customer_id: str = ''
-    payment_method_id: str = ''
-    brand: str = ''
-    last4: str = ''
-    exp_month: int | None = None
-    exp_year: int | None = None
 
 def _intake_summary(row: dict[str, Any]) -> dict[str, Any]:
     """Per-client intake flags for the desk card. Never raises."""
@@ -887,47 +717,8 @@ def _visits_for_client(client: dict[str, Any], tz: ZoneInfo) -> list[dict[str, A
         pass
     return out
 
-class DeskFeeRequest(BaseModel):
-    client_id: str = ''
-    fee_id: str = ''
-    dos: str = ''
-    amount: str = ''
-    amount_cents: int | None = None
-    kind: str = 'visit'
-    note: str = ''
-    event_id: str = ''
-    charge: bool = False
-    duration_minutes: int | None = None
-    notify: bool = True
 
-def _fee_cents(req: DeskFeeRequest) -> int:
-    from app.billing.fees import parse_amount
-    if req.amount_cents is not None:
-        return int(req.amount_cents)
-    return parse_amount(req.amount)
 
-class DeskNoteSignRequest(BaseModel):
-    client_id: str = ''
-    email: str = ''
-    event_id: str = ''
-    dos: str = ''
-    name: str = ''
-    dob: str = ''
-    physician: str = ''
-    return_visit: str = ''
-    medications: str = ''
-    supplements: str = ''
-    recommendations: str = ''
-    long_run: str = ''
-    template: str = 'soap'
-    data: str = ''
-    subjective: str = ''
-    objective: str = ''
-    assessment: str = ''
-    plan: str = ''
-    addendum: str = ''
-    duration: str = ''
-    values: dict[str, str] = {}
 
 def _scribe_link_visits(row: dict[str, Any], rs: datetime, re_: datetime) -> tuple[str, list[dict[str, Any]]]:
     """Candidate calendar visits around a recording. -> (client_id used, visits)."""
@@ -990,12 +781,6 @@ def _ct_day_bounds(event_start_iso: str) -> tuple[datetime, datetime] | None:
     d0 = local.replace(hour=0, minute=0, second=0, microsecond=0)
     return (d0.astimezone(timezone.utc), (d0 + timedelta(days=1)).astimezone(timezone.utc))
 
-class DeskNoteUpdateRequest(BaseModel):
-    client_id: str = ''
-    event_id: str = ''
-    transcript_id: str = ''
-    fields: dict[str, str] = {}
-    transcript: str = ''
 
 def _booked_meet_again(client_id: str, event_id: str, visit_day: str) -> str:
     """Date (+ clock time and booked length) of the next visit, for the Meet again line. Empty if none."""
@@ -1044,53 +829,14 @@ def _visit_minutes(visit: dict[str, Any]) -> int:
     mins = int(round((end - start).total_seconds() / 60))
     return mins if 5 <= mins <= 600 else 0
 
-class AvsShareRequest(BaseModel):
-    note_id: str
-    send_email: bool = True
-    send_sms: bool = True
-    to_email: str = ''
-    to_phone: str = ''
 
-class AvsRevokeRequest(BaseModel):
-    note_id: str
 
-class DeskNoteTemplateSave(BaseModel):
-    id: str
-    title: str = ''
-    body: str = ''
-    sections: list[dict] = []
 
-class DeskNoteTemplateOrder(BaseModel):
-    ids: list[str] = []
 
-class DeskPhraseSave(BaseModel):
-    trigger: str = ''
-    id: str = ''
-    title: str = ''
-    body: str = ''
 
-class DeskPhraseOrder(BaseModel):
-    ids: list[str] = []
 
-class DeskNoteDraftRequest(BaseModel):
-    transcript: str = ''
-    name: str = ''
-    dos: str = ''
-    duration: str = ''
 SCRIBE_NOTE_URL = os.environ.get('SCRIBE_NOTE_URL', 'http://127.0.0.1:8795/note')
 
-class DeskScribeIngestRequest(BaseModel):
-    transcript: str = ''
-    note: str = ''
-    title: str = ''
-    template: str = 'avs'
-    duration_minutes: int = 0
-    client_id: str = ''
-    email: str = ''
-    name: str = ''
-    room: str = ''
-    ended_at: str = ''
-    started_at: str = ''
 
 def _scribe_ingest_authorized(request: Request) -> None:
     """Staff header or dedicated edge ingest token. Query secrets are not accepted."""
@@ -1105,20 +851,8 @@ def _scribe_ingest_authorized(request: Request) -> None:
         return
     _require_staff(request=request)
 
-class DeskVisitFlag(BaseModel):
-    event_id: str = ''
-    flag: str = ''
 
-class DeskVisitCancel(BaseModel):
-    event_id: str = ''
-    calendar_id: str = ''
-    notify: bool = False
 
-class DeskVisitMove(BaseModel):
-    event_id: str = ''
-    calendar_id: str = ''
-    start: str = ''
-    notify: bool = False
 
 def _visit_contact(ev: dict[str, Any], fields: dict[str, Any]) -> tuple[str, str, bool]:
     """Email, phone, and whether a text is allowed. No guess when two people match."""
@@ -1135,218 +869,21 @@ def _visit_contact(ev: dict[str, Any], fields: dict[str, Any]) -> tuple[str, str
             opted_out = raw_c in (0, '0') and str(client.get('sms_consent_source') or '') == 'spruce'
     return (email, phone, not opted_out)
 
-class CipherDrainRequest(BaseModel):
-    id: str = ''
 
-class DeskAgentRequest(BaseModel):
-    messages: list[dict[str, str]] = []
 
-class DeskPracticeSave(BaseModel):
-    display_name: str = ''
-    legal_name: str = ''
-    clinician_name: str = ''
-    clinician_title: str = ''
-    address: str = ''
-    phone: str = ''
-    fax: str = ''
-    email: str = ''
-    website: str = ''
-    meet: str = ''
-    ein: str = ''
-    npi: str = ''
-    licenses: list[dict] = []
-    billing_role: str = ''
-    theme: dict = {}
-    page_titles: dict = {}
-    clinician_callback: str = ''
-    call_handset: str = ''
 
-class DeskServiceSave(BaseModel):
-    slug: str = ''
-    title: str = ''
-    enabled: bool = True
-    public: bool = True
-    duration_minutes: Any = None
-    calendar_duration_minutes: int | None = None
-    price_usd: float | None = None
-    price_by_duration: dict | None = None
-    weekly_hours: dict | None = None
-    slot_interval_minutes: int = 30
-    minimum_notice_minutes: int = 120
-    booking_window_days: int = 30
-    creating: bool = False
 
-class DeskCallRequest(BaseModel):
-    to: str = ''
-    client_id: str = ''
-    name: str = ''
-    sid: str = ''
-    handset: str = ''
 
-class DeskSuperbillRequest(BaseModel):
-    client_id: str = ''
-    email: str = ''
-    dos: str = ''
-    pos: str = '10'
-    address: str = ''
-    diagnoses: list[dict] = []
-    lines: list[dict] = []
-    items: list[str] = []
-    custom_fields: list[dict] = []
-    preview: bool = False
 
-class SuperbillSendRequest(BaseModel):
-    superbill_id: str
-    send_email: bool = True
-    send_sms: bool = True
 
-def _bill_client(client_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    import app.infra.clients_db as clients_db
-    raw = clients_db.get_by_id((client_id or '').strip()) if client_id else None
-    if not raw:
-        raise HTTPException(404, 'client not found')
-    return (raw, client_by_id(raw['id']) or {})
 
-def _bill_billing_folder(view: dict[str, Any]) -> str:
-    from app.infra.drive_paths import BILLING_CHILD, LIVING_ROOT, person_folder_name, paths_from_row, resolve_client_paths
-    billing = paths_from_row(view).get('billing') or ''
-    if not billing:
-        try:
-            billing = resolve_client_paths(view, _drive_list).get('billing') or ''
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(502, 'Could not read the billing folder') from e
-    if not billing:
-        dest = person_folder_name(view)
-        if dest:
-            billing = f'{LIVING_ROOT}/{dest}/{BILLING_CHILD}'
-    return billing
 
-def _bill_drive_save(dest: str, data: bytes) -> None:
-    import base64
-    (code, saved) = _notify_post('/drive/save', {'path': dest, 'b64': base64.b64encode(data).decode('ascii')})
-    if code >= 400 or not saved.get('ok'):
-        raise HTTPException(502, 'drive save failed')
 
-class BillConfirmRequest(BaseModel):
-    client_id: str = ''
-    event_id: str = ''
-    dos: str = ''
-    visit_code: str = ''
-    confirm_code: str = ''
-    diagnoses: list[Any] = []
-    save_dx: bool = False
-    payment: str = 'link'
-    confirm_charge: bool = False
-    send_email: bool = True
-    send_sms: bool = False
-    share_superbill: bool = True
-    dry_run: bool = True
-    specimen: bool = False
-    share_ttl_seconds: int | None = None
 
-class BillSuperbillRequest(BaseModel):
-    billing_id: str = ''
-    diagnoses: list[Any] = []
-    save_dx: bool = False
-    share_superbill: bool = True
-    send_email: bool = True
-    send_sms: bool = False
-    specimen: bool = False
-    share_ttl_seconds: int | None = None
 
-class BillShareRequest(BaseModel):
-    billing_id: str = ''
-    pay_link: bool = False
-    send_email: bool = True
-    send_sms: bool = False
-    share_ttl_seconds: int | None = None
 
-def _bill_send(*, kind: str, view: dict[str, Any], fields: dict[str, Any], sms_body: str, send_email: bool, send_sms: bool, dry: bool, key: str) -> dict[str, Any]:
-    import app.billing.billing as billing
-    from app.messaging.email_templates import render_named
-    from app.messaging.notify import normalize_e164
-    from app.messaging.spruce_api import send_spruce_sms
-    out: dict[str, Any] = {'email': {'skipped': True}, 'sms': {'skipped': True}}
-    email = str(view.get('email') or '')
-    phone = str(view.get('phone') or '')
-    if send_email:
-        if not email:
-            out['email'] = {'ok': False, 'detail': 'no email on file'}
-        elif dry:
-            subject = render_named(kind, {'email': email, **fields})[0]
-            out['email'] = {'ok': True, 'dry_run': True, 'sent': False, 'subject': subject}
-        else:
-            r = send_named_email(kind=kind, to=email, fields=fields)
-            out['email'] = {'ok': bool(r.get('ok')), 'sent': bool(r.get('ok'))}
-    if send_sms:
-        e164 = normalize_e164(phone) or ''
-        if not billing.sms_enabled():
-            out['sms'] = {'ok': False, 'skipped': True, 'detail': 'SMS is off (BILLING_SMS unset or Spruce not configured)'}
-        elif not e164:
-            out['sms'] = {'ok': False, 'detail': 'no phone on file'}
-        elif dry:
-            out['sms'] = {'ok': True, 'dry_run': True, 'sent': False, 'via': 'spruce_api', 'to': '•••' + e164[-4:], 'text': sms_body[:480]}
-        else:
-            r = send_spruce_sms(e164, sms_body, idempotency_key=key)
-            out['sms'] = {'ok': bool(r.get('ok')), 'sent': bool(r.get('sent')), 'via': 'spruce_api', 'request_id': r.get('request_id') or '', 'detail': r.get('detail') or ''}
-    return out
 
-def _bill_share(rec: dict[str, Any], view: dict[str, Any], *, send_email: bool, send_sms: bool, ttl: int | None) -> dict[str, Any]:
-    import app.billing.billing as billing
-    from app.billing.superbill_pdf import superbill_filename
-    if rec.get('superbill_status') != 'saved':
-        raise HTTPException(409, 'No saved superbill to share yet.')
-    dry = bool(rec.get('dry_run'))
-    seconds = billing.SHARE_TTL_SECONDS
-    if ttl is not None and dry:
-        seconds = int(ttl)
-    revoked = billing.revoke_shares(rec['id'])
-    link = billing.mint_share(billing_id=rec['id'], client_id=rec['client_id'], source=rec.get('superbill_source') or 'drive', path=rec.get('superbill_path') or '', name=superbill_filename(rec['dos']), ttl_seconds=seconds)
-    url = f"{PUBLIC_BASE}/sb/{link['token']}"
-    inv = rec.get('invoice') or {}
-    first = (str(view.get('name') or 'there').split() or ['there'])[0]
-    sent = _bill_send(kind='superbill', view=view, fields={'name': view.get('name') or '', 'title': inv.get('label') or 'Visit', 'amount': inv.get('amount_pretty') or '', 'url': url}, sms_body=f'Hi {first}, your superbill is ready (link good for 30 days): {url} — {HOST_SHORT}', send_email=send_email, send_sms=send_sms, dry=dry, key=f"sb-{link['id']}")
-    return {'ok': True, 'url': url, 'share_id': link['id'], 'expires_iso': link['expires_iso'], 'replaced': revoked, **sent}
 
-def _bill_superbill(rec: dict[str, Any], raw: dict[str, Any], view: dict[str, Any], *, specimen: bool) -> dict[str, Any]:
-    import app.billing.billing as billing
-    from app.infra.practice import asset_bytes, load as load_practice, next_statement
-    from app.billing.superbill_pdf import superbill_filename, superbill_pdf
-    dry = bool(rec.get('dry_run'))
-    prac = load_practice()
-    missing = billing.letterhead_missing(prac)
-    dx = rec.get('dx') or []
-    if missing and (not (dry and specimen)):
-        msg = billing.refusal_message(missing)
-        billing.update_billing(rec['id'], superbill_status='refused', superbill_detail=msg[:400])
-        return {'ok': False, 'status': 'refused', 'missing': missing, 'detail': msg}
-    if not dx:
-        msg = 'Superbill not built: add at least one ICD-10 code. The invoice is not affected.'
-        billing.update_billing(rec['id'], superbill_status='refused', superbill_detail=msg)
-        return {'ok': False, 'status': 'refused', 'missing': ['ICD-10 code'], 'detail': msg}
-    statement = next_statement() if not dry else 'DRY-' + rec['id'][:6].upper()
-    doc = billing.superbill_doc(prac=prac, client=view, rec=rec, dx=dx, statement=statement, paid=rec.get('payment_status') == 'paid', specimen=bool(missing))
-    doc['logo'] = asset_bytes('logo')
-    pdf = superbill_pdf(doc)
-    fname = superbill_filename(rec['dos'])
-    if dry:
-        local = f"{rec['id']}.pdf"
-        (billing.dryrun_dir() / local).write_bytes(pdf)
-        (source, path) = ('local', local)
-    else:
-        folder = _bill_billing_folder(view)
-        if not folder:
-            msg = 'Superbill not saved: no billing folder for this client.'
-            billing.update_billing(rec['id'], superbill_status='failed', superbill_detail=msg)
-            return {'ok': False, 'status': 'failed', 'detail': msg}
-        _drive_mkdir(folder)
-        path = folder.rstrip('/') + '/' + fname
-        _bill_drive_save(path, pdf)
-        source = 'drive'
-    billing.update_billing(rec['id'], superbill_status='saved', superbill_source=source, superbill_path=path, superbill_detail='specimen (dry run)' if missing else '', statement=statement)
-    return {'ok': True, 'status': 'saved', 'source': source, 'path': path, 'name': fname, 'statement': statement, 'bytes': len(pdf), 'specimen': bool(missing)}
 
 def _share_page(message: str, status: int, title: str='Superbill link') -> HTMLResponse:
     from html import escape
@@ -1356,192 +893,20 @@ def _share_page(message: str, status: int, title: str='Superbill link') -> HTMLR
     return HTMLResponse(body, status_code=status, headers={'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex', 'Referrer-Policy': 'no-referrer'})
 _PAY_CLOSED = {'paid': 'This invoice is paid. Thank you!', 'void': 'This invoice is closed. No payment is needed.', 'uncollectible': 'This invoice is closed. Contact the practice with any questions.'}
 
-def _last_note_listing(vn_path: str) -> dict[str, Any]:
-    if not vn_path:
-        return {'ok': False, 'status': 'none', 'hint': 'After-visit summary will land in Chart / Visit notes.'}
-    try:
-        data = _drive_list(vn_path)
-    except Exception:
-        data = {}
-    items = [it for it in data.get('items') or [] if (it.get('type') or '') == 'file' and (it.get('name') or '')]
-    if not items:
-        return {'ok': False, 'status': 'empty', 'path': vn_path, 'hint': 'No after-visit summary in Visit notes yet.'}
-    items.sort(key=lambda it: int(it.get('modify_time') or 0), reverse=True)
-    latest = items[0]
-    name = latest.get('name') or ''
-    return {'ok': True, 'status': 'file', 'name': name, 'path': vn_path + '/' + name, 'hint': name, 'count': len(items)}
 
-def _drive_mkdir(path: str) -> None:
-    from app.infra.chart_store import ChartError, local_mkdir
-    try:
-        if local_mkdir(path):
-            return
-    except ChartError as e:
-        raise HTTPException(e.status if e.status >= 400 else 502, str(e)[:200]) from e
-    from app.messaging.notify import NOTIFY_TOKEN
-    payload = json.dumps({'path': path}).encode()
-    req = UrlRequest(_notify_base() + '/drive/mkdir', data=payload, headers={'Content-Type': 'application/json', 'X-Notify-Token': NOTIFY_TOKEN}, method='POST')
-    try:
-        with urlopen(req, timeout=90) as resp:
-            json.loads(resp.read().decode() or '{}')
-    except HTTPError as e:
-        raise HTTPException(e.code if e.code >= 400 else 502, e.read().decode()[:200]) from e
-    except URLError as e:
-        raise HTTPException(502, 'Drive is not reachable') from e
 
-def _folder_names(path: str) -> dict[str, str] | None:
-    """{lowercase name: real name} of child folders, or None when the folder is missing/unreadable."""
-    data = _drive_list(path)
-    if not data.get('ok'):
-        return None
-    return {str(i.get('name') or '').lower(): str(i.get('name') or '') for i in data.get('items') or [] if (i.get('type') or '') == 'folder' and i.get('name')}
 
-def _ensure_visit_notes(chart: str, sub: str='') -> str:
-    """Chart/Visit Notes path for signing (or Chart/<sub>, e.g. Consents). Creates what is missing, never duplicates an existing folder:
-    a missing living client folder gets the real-client tree (Billing + Chart/Consents, Labs, Letters,
-    Orders, Visit Notes); an existing chart only gets Visit Notes if it has none (case-insensitive)."""
-    from app.infra.drive_paths import BILLING_CHILD, CHART_SUBFOLDERS, LIVING_ROOT, VISIT_NOTES_FOLDER
-    want = sub or VISIT_NOTES_FOLDER
-    chart = chart.rstrip('/')
-    (client_dir, _) = chart.rsplit('/', 1)
-    kids = _folder_names(chart)
-    if kids is None:
-        if not client_dir.startswith(LIVING_ROOT + '/'):
-            raise HTTPException(400, 'chart folder not found (archive tree is never created)')
-        if _folder_names(client_dir) is None:
-            if _folder_names(LIVING_ROOT) is None:
-                raise HTTPException(502, 'Drive is not reachable right now; nothing was created')
-            _drive_mkdir(client_dir)
-            _drive_mkdir(client_dir + '/' + BILLING_CHILD)
-        _drive_mkdir(chart)
-        for kid in CHART_SUBFOLDERS:
-            _drive_mkdir(chart + '/' + kid)
-        if want not in CHART_SUBFOLDERS:
-            _drive_mkdir(chart + '/' + want)
-        return chart + '/' + want
-    have = kids.get(want.lower())
-    if have:
-        return chart + '/' + have
-    _drive_mkdir(chart + '/' + want)
-    return chart + '/' + want
 
-def _unique_pdf_name(folder: str, stem: str) -> str:
-    """`stem.pdf`, or `stem-2.pdf`, `stem-3.pdf`… when a same-day note is already there (never overwrite)."""
-    data = _drive_list(folder)
-    names = {str(i.get('name') or '').lower() for i in data.get('items') or []}
-    taken = lambda n: n.lower() in names or n[:-4].lower() + ' chart.pdf' in names
-    (name, k) = (f'{stem}.pdf', 2)
-    while taken(name):
-        (name, k) = (f'{stem}-{k}.pdf', k + 1)
-    return name
 
-def _drive_list(path: str) -> dict[str, Any]:
-    (code, body, _) = _notify_get('/drive/list?path=' + quote(path or '/', safe='/'))
-    if code != 200:
-        return {}
-    try:
-        return json.loads(body.decode() or '{}')
-    except Exception:
-        return {}
 
-def _client_files_payload(row: dict[str, Any], *, confirm: bool=False) -> dict[str, str]:
-    from app.infra.drive_paths import existing_paths, paths_from_row
-    paths = {'folder': '', 'chart': '', 'billing': ''}
-    try:
-        if confirm:
-            paths = existing_paths(row, _drive_list)
-        else:
-            paths = paths_from_row(row)
-    except Exception:
-        paths = {'folder': '', 'chart': '', 'billing': ''}
-    return {'chart': row.get('chart_url') or '', 'billing': row.get('billing_url') or '', 'folder_path': paths.get('folder') or '', 'chart_path': paths.get('chart') or '', 'billing_path': paths.get('billing') or ''}
 
-def _notify_base() -> str:
-    raw = os.environ.get('NOTIFY_WEBHOOK_URL') or 'http://127.0.0.1:8791/notify'
-    return raw[:-7] if raw.endswith('/notify') else raw.rstrip('/')
 
-def _notify_get(path: str) -> tuple[int, bytes, str]:
-    from app.infra.chart_store import local_get
-    local = local_get(path)
-    if local is not None:
-        return local
-    from app.messaging.notify import NOTIFY_TOKEN
-    url = _notify_base() + path
-    req = UrlRequest(url, headers={'X-Notify-Token': NOTIFY_TOKEN}, method='GET')
-    try:
-        with urlopen(req, timeout=90) as resp:
-            ctype = resp.headers.get('Content-Type') or 'application/octet-stream'
-            return (resp.status, resp.read(), ctype)
-    except HTTPError as e:
-        return (e.code, e.read(), 'application/json')
-    except URLError:
-        return (502, json.dumps({'ok': False, 'error': 'Drive is not reachable'}).encode(), 'application/json')
 
-def _notify_post(path: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-    from app.infra.chart_store import local_post
-    local = local_post(path, payload)
-    if local is not None:
-        return local
-    from app.messaging.notify import NOTIFY_TOKEN
-    data = json.dumps(payload).encode()
-    req = UrlRequest(_notify_base() + path, data=data, headers={'Content-Type': 'application/json', 'X-Notify-Token': NOTIFY_TOKEN}, method='POST')
-    try:
-        with urlopen(req, timeout=120) as resp:
-            return (resp.status, json.loads(resp.read().decode() or '{}'))
-    except HTTPError as e:
-        try:
-            body = json.loads(e.read().decode() or '{}')
-        except Exception:
-            body = {'ok': False, 'error': 'notify failed'}
-        return (e.code if e.code >= 400 else 502, body)
-    except URLError:
-        return (502, {'ok': False, 'error': 'Drive is not reachable'})
 
-def _drive_http_save(payload: dict[str, Any]) -> dict[str, Any]:
-    """Save bytes on the chart pipe. Proton still uses the notify bridge. Other backends do not."""
-    from app.infra.chart_store import local_post
-    local = local_post('/drive/save', payload)
-    if local is not None:
-        (code, body) = local
-        if code >= 400 or not body.get('ok'):
-            raise HTTPException(code if code >= 400 else 502, str(body.get('error') or 'drive save failed')[:200])
-        return body
-    from app.messaging.notify import NOTIFY_TOKEN
-    data = json.dumps(payload).encode()
-    req = UrlRequest(_notify_base() + '/drive/save', data=data, headers={'Content-Type': 'application/json', 'X-Notify-Token': NOTIFY_TOKEN}, method='POST')
-    try:
-        with urlopen(req, timeout=180) as resp:
-            saved = json.loads(resp.read().decode() or '{}')
-    except HTTPError as e:
-        raise HTTPException(e.code if e.code >= 400 else 502, e.read().decode()[:200]) from e
-    except URLError as e:
-        raise HTTPException(502, 'Drive is not reachable') from e
-    if not saved.get('ok'):
-        raise HTTPException(502, 'drive save failed')
-    return saved
 
-class MailReplyFile(BaseModel):
-    name: str = 'file'
-    b64: str = ''
 
-class MailReplyRequest(BaseModel):
-    id: str
-    body: str = ''
-    files: list[MailReplyFile] = []
 
-class DriveSaveRequest(BaseModel):
-    path: str
-    text: str = ''
-    b64: str = ''
 
-class DriveShareRequest(BaseModel):
-    path: str
-    client_id: str = ''
-    name: str = ''
-    email: str = ''
-    phone: str = ''
-    send_email: bool = True
-    send_sms: bool = False
 
 def _resolve_send_ids(req: DeskSendRequest) -> list[str]:
     raw = list(req.items or [])
@@ -1569,73 +934,13 @@ def _build_send_links(ids: list[str], *, name: str, email: str) -> list[dict[str
         links.append({'id': item_id, 'label': spec['label'], 'url': url})
     return links
 
-def _demo_on() -> bool:
-    return (os.environ.get('DEMO') or '').strip().lower() in ('1', 'true', 'yes', 'on')
 
-def _paint_page(html: str) -> str:
-    """Fill the example identity from config when a page is served."""
-    tz = timezone_name()
-    if 'data-tz=' not in html:
-        html = html.replace('<html', '<html data-tz="' + tz + '"', 1)
-    pairs = (('https://book.' + 'example.com', book_url()), ('https://meet.' + 'example.com', video_url()), ('https://live.' + 'example.com', live_origin()), ('https://portal.' + 'example.com', portal_origin()), ('https://www.' + 'example.com', www_origin()), ('https://' + 'example.com', site_url()), ('go.' + 'example.com', short_host()), ('book.' + 'example.com', book_host()), ('meet.' + 'example.com', video_host()), ('desk@' + 'example.com', HOST_EMAIL), ('555-' + '010-0100', HOST_PHONE), ('the ' + 'clinician', HOST_SHORT), ('America/' + 'Chicago', tz))
-    for (old, new) in pairs:
-        if old != new and old in html:
-            html = html.replace(old, new)
-    return html
 
-def _page(name: str, cache: bool=True):
-    path = STATIC / name
-    if not path.exists():
-        raise HTTPException(404)
-    headers = {} if cache else {'Cache-Control': 'no-store'}
-    if path.suffix == '.html':
-        return Response(content=_paint_page(path.read_text(encoding='utf-8')), media_type='text/html; charset=utf-8', headers=headers)
-    return FileResponse(path, headers=headers)
-_BOOK_DESCRIPTIONS = {'new-client': 'Book a new-patient video evaluation (about 90–100 minutes, $600) with Example Clinician, DO, MBA. Times are shown in Central Time.', 'follow-up': 'Book a follow-up video visit with Example Clinician, DO, MBA (current patients). Times are shown in Central Time.'}
 
-def _book_page(slug: str) -> HTMLResponse:
-    """book.html with the visit title, meta description and JSON-LD rendered on the server (JS still hydrates the rest)."""
-    import html as _html
-    path = STATIC / 'book.html'
-    if not path.exists():
-        raise HTTPException(404)
-    raw = path.read_text(encoding='utf-8')
-    et = get_event_type(load_config(), slug) if slug else None
-    title = str((et or {}).get('title') or 'Book a visit').strip() or 'Book a visit'
-    desc = _BOOK_DESCRIPTIONS.get(slug, f'Book a {title.lower()} with {HOST_SHORT} by secure video. Times are shown in Central Time.')
-    page_url = f'{book_url()}/{slug}' if slug else book_url() + '/'
-    ld = {'@context': 'https://schema.org', '@type': 'WebPage', '@id': page_url + '#webpage', 'url': page_url, 'name': f'{title} · {HOST_SHORT}', 'description': desc, 'inLanguage': 'en-US', 'isPartOf': {'@id': site_url() + '/#website'}, 'about': {'@id': site_url() + '/#practice'}, 'provider': {'@type': ['MedicalBusiness', 'MedicalOrganization'], '@id': site_url() + '/#practice', 'name': HOST_SHORT, 'url': site_url(), 'telephone': '+1-' + HOST_PHONE}, 'potentialAction': {'@type': 'ReserveAction', 'target': page_url}}
-    ld_json = json.dumps(ld).replace('<', '\\u003c')
-    head_extra = f'  <meta name="description" content="{_html.escape(desc)}" />\n  <link rel="canonical" href="{_html.escape(page_url)}" />\n  <script type="application/ld+json">{ld_json}</script>\n'
-    out = raw.replace('<title>Book · ' + HOST_SHORT + '</title>', f'<title>{_html.escape(title)} · {HOST_SHORT}</title>', 1)
-    out = out.replace('<h1 id="book-title">Book a visit</h1>', f'<h1 id="book-title">{_html.escape(title)}</h1>', 1)
-    out = out.replace('</head>', head_extra + '</head>', 1)
-    if slug == 'follow-up':
-        start = out.find('<label class="check">')
-        end = out.find('</label>', start)
-        if start != -1 and end != -1 and ('name="sms_consent"' in out[start:end]):
-            out = out[:start] + out[end + len('</label>'):]
-        out = out.replace('placeholder="Optional — needed for SMS"', 'placeholder="Optional"', 1)
-    return HTMLResponse(_paint_page(out), headers={'Cache-Control': 'no-store'})
-_NO_INDEX = {'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow', 'Referrer-Policy': 'no-referrer'}
-_C_PAGE = "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=robots content='noindex,nofollow'><meta name=referrer content=no-referrer><meta name=viewport content='width=device-width,initial-scale=1'><title>{title}</title></head><body style='font-family:system-ui;max-width:32em;margin:3em auto;padding:0 1em;line-height:1.5'><h1 style='font-size:1.3em'>{title}</h1>{body}</body></html>"
 
-def _c_expired() -> HTMLResponse:
-    return HTMLResponse(_C_PAGE.format(title='Log in to read your messages', body=f"<p>This link has expired or was replaced. Your messages are safe.</p><p><a href='{SITE_PUBLIC}/portal' style='font-size:1.1em'>Log in with a code</a> to read them.</p>"), status_code=410, headers=_NO_INDEX)
 
-def _c_ip(request: Request | None) -> str:
-    if request is None:
-        return ''
-    return request.headers.get('x-forwarded-for', '').split(',')[0].strip() or (request.client.host if request.client else '')
 
-class BookPrefillRequest(BaseModel):
-    token: str
 
-class DeskBookLinkRequest(BaseModel):
-    client_id: str
-    duration: int | None = None
-    send_email: bool = False
-    dry_run: bool = False
 
 def _desk_book_link(client_id: str, *, duration: int | None=None, send_email: bool=False, dry_run: bool=False) -> dict[str, Any]:
     row = clients_db.get_by_id(str(client_id or '')) if client_id else None
@@ -1655,6 +960,104 @@ def _desk_book_link(client_id: str, *, duration: int | None=None, send_email: bo
             out['email'] = {'ok': bool(r.get('ok')), 'sent': bool(r.get('ok'))}
     return out
 
-class DeskBookLinkRevoke(BaseModel):
-    client_id: str
+from app.http.shapes import (
+    BookRequest,
+    VerifyRequest,
+    VerifyCodeRequest,
+    AccountsRequest,
+    PickAccountRequest,
+    ChatThreadPost,
+    SmsBridgeEnqueue,
+    SmsBridgeAck,
+    PublicTokenRequest,
+    PublicCancelVisitRequest,
+    CardLinkRequest,
+    MailSendRequest,
+    LateSendRequest,
+    DeskAuthEmail,
+    DeskAuthCode,
+    DeskAuthLegacy,
+    DeskBookRequest,
+    DeskSendRequest,
+    InternalIntakeRequest,
+    HoldTimesRequest,
+    InternalCardRequest,
+    DeskFeeRequest,
+    DeskNoteSignRequest,
+    DeskNoteUpdateRequest,
+    AvsShareRequest,
+    AvsRevokeRequest,
+    DeskNoteTemplateSave,
+    DeskNoteTemplateOrder,
+    DeskPhraseSave,
+    DeskPhraseOrder,
+    DeskNoteDraftRequest,
+    DeskScribeIngestRequest,
+    DeskVisitFlag,
+    DeskVisitCancel,
+    DeskVisitMove,
+    CipherDrainRequest,
+    DeskAgentRequest,
+    DeskPracticeSave,
+    DeskServiceSave,
+    DeskCallRequest,
+    DeskSuperbillRequest,
+    SuperbillSendRequest,
+    BillConfirmRequest,
+    BillSuperbillRequest,
+    BillShareRequest,
+    MailReplyFile,
+    MailReplyRequest,
+    DriveSaveRequest,
+    DriveShareRequest,
+    BookPrefillRequest,
+    DeskBookLinkRequest,
+    DeskBookLinkRevoke,
+)
+from app.http.signin import (
+    _client_ip,
+    _desk_cookie_refresh,
+    _desk_session_email,
+    _host_secret,
+    _require_staff,
+    _require_staff_or_host,
+    _set_desk_cookie,
+    _set_staff_cookie,
+    _staff_ok,
+    _staff_secret,
+)
+from app.infra.chart_pipe import (
+    _client_files_payload,
+    _drive_http_save,
+    _drive_list,
+    _drive_mkdir,
+    _ensure_visit_notes,
+    _folder_names,
+    _last_note_listing,
+    _notify_base,
+    _notify_get,
+    _notify_post,
+    _unique_pdf_name,
+)
+from app.billing.helpers import (
+    _bill_billing_folder,
+    _bill_client,
+    _bill_drive_save,
+    _bill_send,
+    _bill_share,
+    _bill_superbill,
+    _fee_cents,
+)
+from app.http.page_paint import (
+    _BOOK_DESCRIPTIONS,
+    _C_PAGE,
+    _NO_INDEX,
+    _book_page,
+    _c_expired,
+    _c_ip,
+    _demo_on,
+    _page,
+    _paint_page,
+)
+
 __all__ = [k for k in globals() if not k.startswith('__')]

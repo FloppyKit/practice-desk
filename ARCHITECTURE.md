@@ -2,17 +2,18 @@
 
 No PHI in this repo. No clinic name, no clinician name, no real phone, fax, address, or mailbox. Secrets stay in the environment, never in git.
 
-The booker is one process. `app/main.py` includes one APIRouter per area. `app/runtime.py` holds the shared helpers. Route bodies live in `app/routers/` and call those helpers as `runtime.<name>`. Tests assign `app.main.<name>`; the runner copies that assignment onto `app.runtime`.
+The booker is one process. `app/main.py` includes one APIRouter per area. `app/runtime.py` re-exports the shared helpers. Request shapes, sign-in, the chart pipe, billing helpers, and page paint each live in one module. Route bodies live in `app/routers/` and call those helpers as `runtime.<name>`. A helper reads a name a test might replace from `app.runtime` at call time. Tests assign `app.main.<name>`; the runner copies that assignment onto `app.runtime`.
 
 | Folder | Job |
 | --- | --- |
 | `app/routers/` | HTTP routes: book, desk, notes, billing, chat, portal, pages |
 | `app/booking/` | Calendars, slots, links, reminders |
 | `app/notes/` | Notes, intake files, scribe drafts |
-| `app/billing/` | Fees, card charges, superbills |
+| `app/http/` | Request shapes, sign-in, page paint |
+| `app/billing/` | Fees, card charges, superbills, and the billing helpers |
 | `app/messaging/` | Email, SMS, chat threads |
 | `app/portal/` | Patient sign-in, staff auth, onboarding |
-| `app/infra/` | Config, tokens, the client store |
+| `app/infra/` | Config, tokens, the client store, the chart pipe |
 | `app/data/` | Email identity loaded at startup |
 
 `api_book` is a sequence of named steps: email, visit type, consent, gates, time span, slot check, cipher check, hold, description, calendar write, consent save, hold record, dual-write, notices, response. A calendar write that does not land is HTTP 502. Saving the hold row stays fail-open so a booked visit is not reported as failed when only the hold index did not write.

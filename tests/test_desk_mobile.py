@@ -66,9 +66,9 @@ def test_no_demo_live_host_in_placeholder_path() -> None:
     assert '<script src="https://live.example.com/static/js/host-office.js' not in html
 
 def test_demo_desk_page_paints_data_demo_and_skips_live_script() -> None:
-    main = (ROOT / 'app' / 'runtime.py').read_text(encoding='utf-8')
+    paint = (ROOT / 'app' / 'http' / 'page_paint.py').read_text(encoding='utf-8')
     desk_src = (ROOT / 'app' / 'routers' / 'desk.py').read_text(encoding='utf-8')
-    assert 'def _demo_on' in main
+    assert 'def _demo_on' in paint
     assert 'data-demo="1"' in desk_src
     assert 'data-stripped-demo-host-office' not in desk_src
     html = DESK.read_text(encoding='utf-8')
