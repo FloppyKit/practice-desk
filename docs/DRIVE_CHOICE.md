@@ -20,13 +20,13 @@ Leave `CHART_BACKEND` unset, or set it to `proton`. Run your own bridge that acc
 
 Set `CHART_BACKEND=gdrive`, `GOOGLE_DRIVE_SA_FILE` to a service-account JSON file, and `GOOGLE_DRIVE_ROOT_ID` to the folder that holds `/Clients`. Optional `GOOGLE_DRIVE_IMPERSONATE` is a Workspace user to act as. The calendar service account is not reused.
 
-The same paths are folders under that root. A share makes an anyone-with-the-link reader permission and returns the Google link. If Google refuses the link, the share fails. It does not pretend the file was shared.
+The same paths are folders under that root. A share makes an anyone-with-the-link reader permission and returns the Google link. If Google refuses the link, the share fails. It does not pretend the file was shared. That link is for a demo folder only. This booker does not create a named-account share.
 
 ## Nextcloud — optional
 
 Set `CHART_BACKEND=nextcloud`, `NEXTCLOUD_URL` (https), `NEXTCLOUD_USER`, and `NEXTCLOUD_APP_PASSWORD`. The app password is an app password, not the account password. The URL must be https, except localhost for a local box.
 
-Files go over WebDAV (`MKCOL`, `PROPFIND`, `GET`, `PUT`) on the same paths. A share creates a public link through Nextcloud's share API. If that link is missing, the share fails.
+Files go over WebDAV (`MKCOL`, `PROPFIND`, `GET`, `PUT`) on the same paths. A share creates a public link through Nextcloud's share API. If that link is missing, the share fails. That link is for a demo folder only. It is not a login-gated share.
 
 ## What a new install still sets
 
