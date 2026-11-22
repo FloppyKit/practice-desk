@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import os
-import urllib.error
 from urllib.parse import parse_qs, unquote, urlparse
 
 _ALIASES = {
@@ -91,11 +90,12 @@ def _transport(exc: BaseException) -> ChartError | None:
         "TransportError",
         "MalformedError",
         "DefaultCredentialsError",
+        "ServerNotFoundError",
     }:
         return ChartError("chart store is not reachable", 502)
-    if mod.startswith("google.auth") or mod.startswith("googleapiclient.errors"):
+    if mod.startswith("google.auth") or mod.startswith("googleapiclient.errors") or mod.startswith("httplib2"):
         return ChartError("chart store is not reachable", 502)
-    if isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError, json.JSONDecodeError)):
+    if isinstance(exc, (OSError, json.JSONDecodeError)):
         return ChartError("chart store is not reachable", 502)
     return None
 

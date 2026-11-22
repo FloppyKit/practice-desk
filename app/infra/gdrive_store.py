@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import os
 import threading
-import urllib.error
 from datetime import datetime
 from typing import Any
 
@@ -34,11 +33,12 @@ def _google_failure(exc: BaseException) -> ChartError | None:
         "TransportError",
         "MalformedError",
         "DefaultCredentialsError",
+        "ServerNotFoundError",
     }:
         return ChartError("Google Drive is not reachable")
-    if mod.startswith("google.auth") or mod.startswith("googleapiclient.errors"):
+    if mod.startswith("google.auth") or mod.startswith("googleapiclient.errors") or mod.startswith("httplib2"):
         return ChartError("Google Drive is not reachable")
-    if isinstance(exc, (json.JSONDecodeError, urllib.error.URLError, TimeoutError, ConnectionError)):
+    if isinstance(exc, (OSError, json.JSONDecodeError)):
         return ChartError("Google Drive is not reachable")
     return None
 

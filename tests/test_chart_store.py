@@ -393,7 +393,7 @@ def test_unset_backend_saves_through_the_notify_bridge() -> None:
         runtime.urlopen = old
 
 
-def test_gdrive_dead_server_is_502() -> None:
+def _dead_drive(exc: BaseException):
     class _Dead:
         def files(self):
             return self
@@ -401,20 +401,53 @@ def test_gdrive_dead_server_is_502() -> None:
         def list(self, **_kw):
             return self
 
+        def get(self, **_kw):
+            return self
+
+        def create(self, **_kw):
+            return self
+
         def execute(self):
-            raise type("HttpError", (Exception,), {})("down")
+            raise exc
+
+    return _Dead()
+
+
+def _assert_gdrive_down(exc: BaseException) -> None:
+    import app.runtime as runtime
 
     gdrive_store.clear_cache()
     old = gdrive_store.drive_service
-    gdrive_store.drive_service = lambda: _Dead()
+    gdrive_store.drive_service = lambda: _dead_drive(exc)
     try:
         with _env(CHART_BACKEND="gdrive", GOOGLE_DRIVE_ROOT_ID="root", GOOGLE_DRIVE_SA_FILE="/not/used"):
             saved = local_post("/drive/save", {"path": "/Clients/a.txt", "text": "x"})
             assert saved is not None and saved[0] == 502 and saved[1]["ok"] is False
             assert "reachable" in saved[1]["error"]
+            listed = runtime._notify_get("/drive/list?path=/Clients")
+            assert listed[0] == 502 and b"reachable" in listed[1]
+            try:
+                local_mkdir("/Clients")
+            except ChartError as err:
+                assert err.status == 502 and "reachable" in str(err)
+            else:
+                raise AssertionError("a dead Drive mkdir succeeded")
     finally:
         gdrive_store.drive_service = old
         gdrive_store.clear_cache()
+
+
+def test_gdrive_dead_server_is_502() -> None:
+    _assert_gdrive_down(type("HttpError", (Exception,), {})("down"))
+
+
+def test_gdrive_dns_failure_is_502() -> None:
+    import errno
+
+    from httplib2.error import ServerNotFoundError
+
+    _assert_gdrive_down(ServerNotFoundError("Unable to find the server at nonexistent.invalid"))
+    _assert_gdrive_down(OSError(errno.ENETUNREACH, "Network is unreachable"))
 
 
 def test_gdrive_bad_account_file_is_502() -> None:
