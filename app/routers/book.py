@@ -214,7 +214,7 @@ def _book_hold_plan(req: runtime.BookRequest, start, src: str, occ, request: run
             desk_intake_url = runtime._desk_intake_link(str(req.email), str(_bk['id']))
     return (hold, desk_intake_url)
 
-def _book_payload(req: runtime.BookRequest, start, dur: int, cal_dur: int, sms_consent, extra_notify, price_label, location_line, event_id: str, cal_id, title, hold, occ):
+def _book_payload(req: runtime.BookRequest, start, dur: int, cal_dur: int, sms_consent, extra_notify, price_label, location_line, event_id: str, cal_id, title, hold, occ, envelope_id: str=''):
     if occ:
         summary = f'Visit · {event_id[:8]}'
     elif cal_dur != dur:
@@ -243,8 +243,8 @@ def _book_payload(req: runtime.BookRequest, start, dur: int, cal_dur: int, sms_c
     description = '\n'.join(desc_lines)
     if occ:
         private_props = {'booker': '1', 'cipher': '1', 'event_type': req.event_type, 'duration_minutes': str(dur), 'rem24': '1', 'rem1': '1', 'rem2': '1', 'remsms': '1'}
-        if runtime.envelope_id:
-            private_props['cipher_envelope_id'] = runtime.envelope_id
+        if envelope_id:
+            private_props['cipher_envelope_id'] = envelope_id
     else:
         private_props = {'booker': '1', 'patient_email': str(req.email), 'patient_name': req.name, 'patient_phone': req.phone or '', 'sms_consent': '1' if sms_consent else '0', 'event_type': req.event_type, 'title': title, 'when_label': when_label, 'duration_minutes': str(dur), 'price_label': price_label, 'rem24': '0', 'rem2': '0'}
         if hold:
@@ -321,7 +321,7 @@ def api_book(req: runtime.BookRequest, background_tasks: runtime.BackgroundTasks
     event_id = runtime.uuid.uuid4().hex
     (cipher_on, occ, dual, envelope_id) = _book_cipher(req)
     (hold, desk_intake_url) = _book_hold_plan(req, start, src, occ, request)
-    (summary, description, when_label, private_props, cancel_url, ics_url, rebook_url) = _book_payload(req, start, dur, cal_dur, sms_consent, extra_notify, price_label, location_line, event_id, cal_id, title, hold, occ)
+    (summary, description, when_label, private_props, cancel_url, ics_url, rebook_url) = _book_payload(req, start, dur, cal_dur, sms_consent, extra_notify, price_label, location_line, event_id, cal_id, title, hold, occ, envelope_id)
     created = _book_write(cfg, cal_id, summary, description, start, end, private_props, event_id, hold)
     _book_save_consent(req, request, hold, on_file)
     hold = _book_record_hold(req, hold, event_id, cal_id, sms_consent, title, when_label, start, summary, src)

@@ -100,3 +100,69 @@ def test_token_purpose_cancel():
     assert payload.get('p') == 'cancel'
     assert payload.get('m') == 'jane.demo@example.test'
     assert not payload.get('n')
+
+def test_occupancy_booking_stores_envelope_id():
+    """A sealed occupancy booking stores the envelope id the request already carried."""
+    import app.main as main
+    import app.runtime as runtime
+    from app.infra import clients_db
+    from app.portal import cipher_queue
+    from fastapi import BackgroundTasks, Request
+    env_keys = ('CIPHER_P1', 'CIPHER_DUAL_WRITE', 'CIPHER_OCCUPANCY', 'CIPHER_QUEUE_DB', 'CANCEL_SECRET_FILE')
+    saved_env = {key: os.environ.get(key) for key in env_keys}
+    saved_calls = {
+        'r_slots': runtime.generate_slots,
+        'r_create': runtime.create_event,
+        'm_slots': main.generate_slots,
+        'm_create': main.create_event,
+    }
+    had_attr = hasattr(runtime, 'envelope_id')
+    old_attr = getattr(runtime, 'envelope_id', None)
+    old_db = clients_db.DB_PATH
+    tmp = _iso_tmp()
+    captured: dict = {}
+    start = '2026-12-01T15:00:00-06:00'
+
+    def _slots(*_a, **_k):
+        return [{'start': start}]
+
+    def _create(**kw):
+        captured.update(kw)
+        return {'htmlLink': ''}
+
+    os.environ['CIPHER_P1'] = '1'
+    os.environ['CIPHER_DUAL_WRITE'] = '0'
+    os.environ['CIPHER_OCCUPANCY'] = '1'
+    os.environ['CIPHER_QUEUE_DB'] = str(tmp / 'queue.sqlite')
+    secret = tmp / 'cancel.secret'
+    secret.write_text('demo-test-secret\n', encoding='utf-8')
+    os.environ['CANCEL_SECRET_FILE'] = str(secret)
+    clients_db.DB_PATH = tmp / 'clients.sqlite'
+    runtime.envelope_id = 'not-this-one'
+    runtime.generate_slots = main.generate_slots = _slots
+    runtime.create_event = main.create_event = _create
+    try:
+        row = cipher_queue.put({'kind': 'intake', 'ct': '', 'content_hash': 'abc', 'bytes': 0}, source='test')
+        req = main.BookRequest(event_type='new-client', start=start, duration_minutes=90, name='Jane Demo', email='jane.demo@example.com', send_email=False, cipher_envelope_id=row['id'])
+        http = Request({'type': 'http', 'method': 'POST', 'path': '/api/book', 'query_string': b'', 'headers': []})
+        out = main.api_book(req, BackgroundTasks(), http)
+        assert out['ok'] is True
+        props = captured['private_props']
+        assert props['cipher_envelope_id'] == row['id']
+        assert props['cipher_envelope_id'] != 'not-this-one'
+        assert 'Jane Demo' not in captured['summary']
+    finally:
+        runtime.generate_slots = saved_calls['r_slots']
+        runtime.create_event = saved_calls['r_create']
+        main.generate_slots = saved_calls['m_slots']
+        main.create_event = saved_calls['m_create']
+        if had_attr:
+            runtime.envelope_id = old_attr
+        else:
+            del runtime.envelope_id
+        clients_db.DB_PATH = old_db
+        for key, val in saved_env.items():
+            if val is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = val
