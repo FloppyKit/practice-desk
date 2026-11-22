@@ -2,4 +2,4 @@
 
 **No PHI in this repo.**
 
-See ARCHITECTURE.md.
+See ARCHITECTURE.md. File-by-file jobs: docs/MODULE_MAP.md.

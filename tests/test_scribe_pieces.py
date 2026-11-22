@@ -5,7 +5,7 @@ from pathlib import Path
 
 def _load():
     sys.modules.setdefault('backends', types.SimpleNamespace(backend_is_phi=lambda : True, backend_kind=lambda : 't', note_configured=lambda : False, phi_only=lambda : True, stt_configured=lambda : True, transcribe=lambda b: {}, write_note=lambda t, m: {}))
-    spec = importlib.util.spec_from_file_location('scribe_mod', Path(__file__).parent.parent / 'edge/scribe/scribe.py')
+    spec = importlib.util.spec_from_file_location('scribe_mod', Path(__file__).parent / 'scribe.py')
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     return m

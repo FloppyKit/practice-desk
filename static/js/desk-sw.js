@@ -1,10 +1,9 @@
 /* Practice desk shell cache. Never caches API or note bodies. */
-var CACHE = "practice-desk-v25";
+var CACHE = "practice-desk-v26";
 var SHELL = [
   "/desk",
   "/static/desk.webmanifest",
   "/static/css/booker.css",
-  "/static/css/client-tile.css",
   "/static/js/theme.js",
   "/static/js/desk-auth.js?v=1",
   "/static/js/desk-layout.js?v=1",
