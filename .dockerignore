@@ -1,0 +1,16 @@
+.git
+__pycache__
+*.py[cod]
+.venv
+venv
+.env
+.env.*
+secrets/
+!.env.example
+!.env.demo
+config/event-types.yaml
+*.sqlite
+/data
+_host
+scripts/private
+.DS_Store

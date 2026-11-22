@@ -1,0 +1,16 @@
+
+# local only
+.venv/
+venv/
+.ruff_cache/
+__pycache__/
+*.pyc
+config/event-types.yaml
+.env
+.env.*
+!.env.example
+*.bak*
+._*
+MDtoolbox.env
+*.pdf
+docs/intake-reshape/

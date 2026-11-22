@@ -1,0 +1,13 @@
+{
+  "patient_avs_order": [
+    "Visit summary",
+    "Medications",
+    "Plan"
+  ],
+  "chart_note_order": [
+    "Subjective",
+    "Objective",
+    "Assessment",
+    "Plan"
+  ]
+}

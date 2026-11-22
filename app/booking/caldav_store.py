@@ -1,0 +1,332 @@
+"""Local CalDAV (Radicale) — busy + events. No Google required to read."""
+from __future__ import annotations
+from app.infra.config import timezone_name
+import logging
+import os
+import threading
+import time
+import uuid
+from datetime import datetime
+from typing import Any
+from urllib.parse import quote
+from zoneinfo import ZoneInfo
+log = logging.getLogger('booker.caldav')
+CALDAV_URL = os.environ.get('CALDAV_URL', 'http://127.0.0.1:5232/').rstrip('/') + '/'
+CALDAV_USER = os.environ.get('CALDAV_USER', 'booker')
+CALDAV_PASSWORD = os.environ.get('CALDAV_PASSWORD', '')
+CALDAV_CALENDAR = os.environ.get('CALDAV_CALENDAR', 'practice')
+
+def ready() -> bool:
+    return bool(CALDAV_URL and CALDAV_USER and CALDAV_PASSWORD)
+
+def _client():
+    import caldav
+    return caldav.DAVClient(url=CALDAV_URL, username=CALDAV_USER, password=CALDAV_PASSWORD)
+_cal = None
+_list_cache: dict[tuple[str, str], tuple[float, list]] = {}
+_LIST_TTL = 12.0
+_STALE_MAX = 600.0
+_WIDE_DAYS = 30
+_refreshing: set[tuple[str, str]] = set()
+
+def _calendar(force_principal: bool=False):
+    """Reuse one Calendar handle. Skip principal()+calendars() PROPFIND on the hot path."""
+    global _cal
+    if _cal is not None and (not force_principal):
+        return _cal
+    import caldav
+    client = _client()
+    name = CALDAV_CALENDAR
+    if not force_principal:
+        direct = f"{CALDAV_URL.rstrip('/')}/{quote(CALDAV_USER, safe='')}/{quote(name, safe='')}/"
+        _cal = caldav.Calendar(client=client, url=direct)
+        return _cal
+    principal = client.principal()
+    for cal in principal.calendars():
+        try:
+            if (cal.name or '').lower() == name.lower():
+                _cal = cal
+                return cal
+        except Exception:
+            continue
+        href = str(getattr(cal, 'url', '') or '')
+        if href.rstrip('/').endswith('/' + name) or f'/{name}/' in href:
+            _cal = cal
+            return cal
+    _cal = principal.make_calendar(name=name, cal_id=name)
+    return _cal
+
+def reset() -> None:
+    global _cal
+    _cal = None
+    _list_cache.clear()
+_dirty: set[tuple[str, str]] = set()
+
+def _bump_lists() -> None:
+    """A write or sync happened: drop narrow windows, keep wide ones as stale-but-servable
+    (drawer never goes cold) and refresh them in the background."""
+    wide = [k for k in _list_cache if _is_wide(k)]
+    for k in list(_list_cache):
+        if k not in wide:
+            _list_cache.pop(k, None)
+    for k in wide:
+        (ts, data) = _list_cache[k]
+        _list_cache[k] = (min(ts, time.monotonic() - _LIST_TTL - 1), data)
+        _dirty.add(k)
+        _refresh_bg(k)
+
+def _ev_bounds(e: dict[str, Any]) -> tuple[datetime | None, datetime | None]:
+
+    def one(d: dict[str, Any]) -> datetime | None:
+        raw = (d or {}).get('dateTime') or (d or {}).get('date') or ''
+        if not raw:
+            return None
+        try:
+            x = datetime.fromisoformat(str(raw).replace('Z', '+00:00'))
+        except ValueError:
+            return None
+        return x if x.tzinfo else x.replace(tzinfo=time_zone_default())
+    return (one(e.get('start') or {}), one(e.get('end') or {}) or one(e.get('start') or {}))
+
+def time_zone_default():
+    from zoneinfo import ZoneInfo
+    return ZoneInfo(timezone_name())
+
+def _from_wide(time_min: datetime, time_max: datetime) -> list[dict[str, Any]] | None:
+    """Serve a narrow window (the week board) from a clean cached wide window: no CalDAV round trip."""
+    now = time.monotonic()
+    for (k, (ts, data)) in list(_list_cache.items()):
+        if not _is_wide(k) or k in _dirty or now - ts >= _STALE_MAX:
+            continue
+        (a, b) = (datetime.fromisoformat(x) for x in k)
+        if a <= time_min and time_max <= b:
+            out = []
+            for e in data:
+                (s0, s1) = _ev_bounds(e)
+                if s0 and s1 and (s1 > time_min) and (s0 < time_max):
+                    out.append(e)
+                elif s0 and s1 == s0 and (time_min <= s0 < time_max):
+                    out.append(e)
+            return out
+    return None
+_keeper_started = False
+
+def _start_keeper() -> None:
+    """Refresh cached wide windows every 4 min so a drawer open after a quiet spell is never cold."""
+    global _keeper_started
+    if _keeper_started:
+        return
+    _keeper_started = True
+
+    def loop() -> None:
+        while True:
+            time.sleep(240)
+            for k in [k for k in list(_list_cache) if _is_wide(k)]:
+                _refresh_bg(k)
+    threading.Thread(target=loop, name='caldav-wide-keeper', daemon=True).start()
+
+def _is_wide(key: tuple[str, str]) -> bool:
+    try:
+        (a, b) = (datetime.fromisoformat(x) for x in key)
+        return (b - a).days >= _WIDE_DAYS
+    except Exception:
+        return False
+
+def _fetch_list(key: tuple[str, str]) -> list[dict[str, Any]]:
+    (tmin, tmax) = (datetime.fromisoformat(x) for x in key)
+    out = [_vevent_to_google(comp) for (_item, comp) in _iter_events(tmin, tmax)]
+    out.sort(key=lambda e: (e.get('start') or {}).get('dateTime') or '')
+    if len(_list_cache) > 40:
+        _list_cache.clear()
+    _list_cache[key] = (time.monotonic(), out)
+    if _is_wide(key):
+        _dirty.discard(key)
+        _start_keeper()
+    return out
+
+def _refresh_bg(key: tuple[str, str]) -> None:
+    if key in _refreshing:
+        return
+    _refreshing.add(key)
+
+    def run() -> None:
+        try:
+            _fetch_list(key)
+        except Exception as e:
+            log.warning('caldav bg refresh failed: %s', e)
+        finally:
+            _refreshing.discard(key)
+    threading.Thread(target=run, name='caldav-list-refresh', daemon=True).start()
+
+def _prop_key(k: str) -> str:
+    return 'X-PRACTICE-DESK-' + str(k).upper().replace('_', '-')
+
+def _ics(*, uid: str, summary: str, description: str, start: datetime, end: datetime, timezone: str, private_props: dict[str, str] | None, status: str | None=None) -> bytes:
+    from icalendar import Calendar, Event
+    cal = Calendar()
+    cal.add('prodid', '-//Practice Desk Booker//EN')
+    cal.add('version', '2.0')
+    cal.add('calscale', 'GREGORIAN')
+    ev = Event()
+    ev.add('uid', uid)
+    ev.add('summary', summary)
+    if description:
+        ev.add('description', description)
+    tz = ZoneInfo(timezone)
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=tz)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=tz)
+    ev.add('dtstart', start)
+    ev.add('dtend', end)
+    ev.add('dtstamp', datetime.now(tz))
+    if status:
+        ev.add('status', status.upper())
+    props = dict(private_props or {})
+    props.setdefault('booker', '1')
+    for (k, v) in props.items():
+        ev[_prop_key(k)] = str(v)
+    cal.add_component(ev)
+    return cal.to_ical()
+
+def _vevent_to_google(comp) -> dict[str, Any]:
+
+    def as_dt(val) -> datetime | None:
+        if val is None:
+            return None
+        dt = val.dt if hasattr(val, 'dt') else val
+        if isinstance(dt, datetime):
+            return dt
+        return None
+    uid = str(comp.get('uid') or '')
+    summary = str(comp.get('summary') or '')
+    description = str(comp.get('description') or '')
+    start = as_dt(comp.get('dtstart'))
+    end = as_dt(comp.get('dtend'))
+    priv: dict[str, str] = {}
+    for (key, val) in comp.items():
+        k = str(key)
+        if k.upper().startswith('X-PRACTICE-DESK-'):
+            short = k[12:].lower().replace('-', '_')
+            priv[short] = str(val)
+    return {'id': uid, 'summary': summary, 'description': description, 'status': 'tentative' if str(comp.get('status') or '').upper() == 'TENTATIVE' else 'confirmed', 'start': {'dateTime': start.isoformat()} if start else {}, 'end': {'dateTime': end.isoformat()} if end else {}, 'extendedProperties': {'private': priv}}
+
+def _search(cal, time_min: datetime, time_max: datetime):
+    try:
+        return cal.search(start=time_min, end=time_max, event=True, expand=True)
+    except TypeError:
+        return cal.date_search(start=time_min, end=time_max, expand=True)
+
+def _iter_events(time_min: datetime, time_max: datetime):
+    cal = _calendar()
+    try:
+        results = _search(cal, time_min, time_max)
+    except Exception as e:
+        log.warning('caldav search retry via principal: %s', e)
+        reset()
+        cal = _calendar(force_principal=True)
+        results = _search(cal, time_min, time_max)
+    for item in results or []:
+        try:
+            ical = item.icalendar_instance
+        except Exception:
+            try:
+                from icalendar import Calendar
+                ical = Calendar.from_ical(item.data)
+            except Exception:
+                continue
+        for comp in ical.walk('VEVENT'):
+            yield (item, comp)
+
+def freebusy(_calendar_ids: list[str], time_min: datetime, time_max: datetime) -> list[dict[str, datetime]]:
+    busy: list[tuple[datetime, datetime]] = []
+    for (_item, comp) in _iter_events(time_min, time_max):
+        start = comp.get('dtstart')
+        end = comp.get('dtend')
+        if not start or not end:
+            continue
+        (s, e) = (start.dt, end.dt)
+        if not isinstance(s, datetime) or not isinstance(e, datetime):
+            continue
+        busy.append((s, e))
+    busy.sort(key=lambda x: x[0])
+    merged: list[tuple[datetime, datetime]] = []
+    for (s, e) in busy:
+        if not merged or s > merged[-1][1]:
+            merged.append((s, e))
+        else:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+    return [{'start': s, 'end': e} for (s, e) in merged]
+
+def create_event(calendar_id: str, summary: str, description: str, start: datetime, end: datetime, timezone: str, attendee_email: str | None=None, private_props: dict[str, str] | None=None, uid: str | None=None, status: str | None=None) -> dict[str, Any]:
+    del calendar_id, attendee_email
+    uid = uid or uuid.uuid4().hex
+    ics = _ics(uid=uid, summary=summary, description=description, start=start, end=end, timezone=timezone, private_props=private_props, status=status)
+    cal = _calendar()
+    cal.save_event(ics.decode() if isinstance(ics, bytes) else ics)
+    _bump_lists()
+    return {'id': uid, 'summary': summary, 'description': description, 'start': {'dateTime': start.isoformat()}, 'end': {'dateTime': end.isoformat()}, 'extendedProperties': {'private': dict(private_props or {})}, 'htmlLink': '', 'status': status or 'confirmed'}
+
+def get_event(calendar_id: str, event_id: str) -> dict[str, Any]:
+    del calendar_id
+    cal = _calendar()
+    ev = cal.event_by_uid(event_id)
+    ical = ev.icalendar_instance
+    for comp in ical.walk('VEVENT'):
+        return _vevent_to_google(comp)
+    raise KeyError(event_id)
+
+def list_events(calendar_id: str, time_min: datetime, time_max: datetime) -> list[dict[str, Any]]:
+    del calendar_id
+    key = (time_min.isoformat(), time_max.isoformat())
+    now = time.monotonic()
+    hit = _list_cache.get(key)
+    if hit and now - hit[0] < _LIST_TTL:
+        return list(hit[1])
+    if not _is_wide(key):
+        sub = _from_wide(time_min, time_max)
+        if sub is not None:
+            return sub
+    if hit and _is_wide(key) and (key not in _dirty) and (now - hit[0] < _STALE_MAX):
+        _refresh_bg(key)
+        return list(hit[1])
+    return list(_fetch_list(key))
+
+def list_booker_events(calendar_id: str, time_min: datetime, time_max: datetime) -> list[dict[str, Any]]:
+    return [e for e in list_events(calendar_id, time_min, time_max) if ((e.get('extendedProperties') or {}).get('private') or {}).get('booker') == '1']
+
+def patch_event(calendar_id: str, event_id: str, *, description: str | None=None, private_props: dict[str, str] | None=None, summary: str | None=None, status: str | None=None, start: datetime | None=None, end: datetime | None=None) -> dict[str, Any]:
+    del calendar_id
+    cal = _calendar()
+    ev = cal.event_by_uid(event_id)
+    ical = ev.icalendar_instance
+    for comp in ical.walk('VEVENT'):
+        if description is not None:
+            comp['description'] = description
+        if summary is not None:
+            comp['summary'] = summary
+        if status is not None:
+            comp['status'] = status.upper()
+        if start is not None:
+            if 'dtstart' in comp:
+                del comp['dtstart']
+            comp.add('dtstart', start)
+        if end is not None:
+            if 'dtend' in comp:
+                del comp['dtend']
+            comp.add('dtend', end)
+        if private_props:
+            for (k, v) in private_props.items():
+                comp[_prop_key(k)] = str(v)
+        break
+    ev.data = ical.to_ical()
+    ev.save()
+    _bump_lists()
+    return get_event('', event_id)
+
+def delete_event(calendar_id: str, event_id: str) -> None:
+    del calendar_id
+    cal = _calendar()
+    ev = cal.event_by_uid(event_id)
+    ev.delete()
+    _bump_lists()

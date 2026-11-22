@@ -1,0 +1,19 @@
+[project]
+name = "practice-desk"
+version = "0.4.0"
+description = "Practice Desk booker. A vanilla install with no clinic identity and no PHI."
+requires-python = ">=3.12"
+readme = "README.md"
+
+[tool.ruff]
+line-length = 120
+src = ["app", "tests"]
+extend-exclude = ["docs", "static"]
+
+[tool.ruff.lint]
+select = ["F", "E9"]
+
+[tool.ruff.lint.per-file-ignores]
+# main re-exports runtime and the route callables. runtime re-exports helpers the routers call.
+"app/main.py" = ["F401", "F403", "F405"]
+"app/runtime.py" = ["F401"]

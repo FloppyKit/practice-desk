@@ -1,0 +1,12 @@
+{
+  "title": "Lab request",
+  "sections": [
+    {"id": "dos", "label": "Date", "type": "date"},
+    {"id": "patient", "label": "Patient", "type": "line"},
+    {"id": "dob", "label": "Date of birth", "type": "date"},
+    {"id": "labs", "label": "Tests requested", "type": "paragraph"},
+    {"id": "fasting", "label": "Fasting", "type": "line"},
+    {"id": "indication", "label": "Indication", "type": "line"},
+    {"id": "clinician", "label": "Clinician", "type": "line"}
+  ]
+}

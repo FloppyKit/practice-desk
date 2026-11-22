@@ -1,0 +1,12 @@
+{
+  "title": "High school accommodations",
+  "sections": [
+    {"id": "dos", "label": "Date", "type": "date"},
+    {"id": "student", "label": "Student", "type": "line"},
+    {"id": "dob", "label": "Date of birth", "type": "date"},
+    {"id": "school", "label": "School", "type": "line"},
+    {"id": "supports", "label": "Supports in place", "type": "paragraph"},
+    {"id": "accommodations", "label": "Recommended accommodations", "type": "paragraph"},
+    {"id": "clinician", "label": "Clinician", "type": "line"}
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "voice": {
+    "tone": "direct and practical",
+    "avoid": [
+      "jargon without a plain gloss"
+    ]
+  },
+  "return_visit_stems": [
+    "Meet again in {weeks} weeks."
+  ],
+  "med_change_stems": [
+    "Continue Example med 10mg."
+  ],
+  "lifestyle_stems": [
+    "Keep a steady sleep schedule."
+  ],
+  "supplement_defaults": []
+}

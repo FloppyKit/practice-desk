@@ -1,0 +1,15 @@
+{
+  "host_name": "the clinician",
+  "host_short": "the clinician",
+  "host_email": "desk@example.com",
+  "host_phone": "555-010-0100",
+  "practice": "Example Practice",
+  "meet_url": "https://meet.example.com",
+  "meet_host": "meet.example.com",
+  "site_url": "https://example.com",
+  "book_url": "https://book.example.com",
+  "forms_url": "https://example.com/forms",
+  "pay_url": "https://example.com/pay",
+  "logo_https": "https://book.example.com/api/practice/logo",
+  "timezone": "America/Chicago"
+}

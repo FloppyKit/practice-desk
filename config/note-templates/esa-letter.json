@@ -1,0 +1,12 @@
+{
+  "title": "Emotional support animal letter",
+  "sections": [
+    {"id": "dos", "label": "Date", "type": "date"},
+    {"id": "patient", "label": "Patient", "type": "line"},
+    {"id": "dob", "label": "Date of birth", "type": "date"},
+    {"id": "housing", "label": "Housing or addressee", "type": "line"},
+    {"id": "animal", "label": "Animal", "type": "line"},
+    {"id": "statement", "label": "Statement", "type": "paragraph"},
+    {"id": "clinician", "label": "Clinician", "type": "line"}
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "title": "College withdrawal letter",
+  "sections": [
+    {"id": "dos", "label": "Date", "type": "date"},
+    {"id": "student", "label": "Student", "type": "line"},
+    {"id": "dob", "label": "Date of birth", "type": "date"},
+    {"id": "school", "label": "School and term", "type": "line"},
+    {"id": "request", "label": "Request", "type": "paragraph"},
+    {"id": "clinical", "label": "Clinical basis (no extra detail beyond what the school needs)", "type": "paragraph"},
+    {"id": "clinician", "label": "Clinician", "type": "line"}
+  ]
+}

@@ -1,0 +1,368 @@
+"""Stripe off-session charge. No PAN. Description is date only."""
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import os
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from typing import Any
+
+STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "").strip()
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "").strip()
+
+
+def stripe_ready() -> bool:
+    return bool(STRIPE_SECRET_KEY.startswith("sk_"))
+
+
+def _post(path: str, form: dict[str, str], *, idem: str = "") -> dict[str, Any]:
+    if not stripe_ready():
+        raise RuntimeError("Stripe is not configured on the booker")
+    data = urllib.parse.urlencode(form).encode()
+    headers = {
+        "Authorization": "Bearer " + STRIPE_SECRET_KEY,
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+    if idem:
+        headers["Idempotency-Key"] = idem[:80]
+    req = urllib.request.Request(
+        "https://api.stripe.com/v1" + path,
+        data=data,
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            return json.loads(resp.read().decode() or "{}")
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8", "replace")
+        try:
+            err = json.loads(raw)
+            msg = str(((err.get("error") or {}).get("message")) or raw[:160])
+        except (json.JSONDecodeError, TypeError, ValueError):
+            msg = raw[:160] or f"stripe {e.code}"
+        raise RuntimeError(msg) from e
+
+
+def _get(path: str) -> dict[str, Any]:
+    if not stripe_ready():
+        raise RuntimeError("Stripe is not configured on the booker")
+    req = urllib.request.Request(
+        "https://api.stripe.com/v1" + path,
+        headers={"Authorization": "Bearer " + STRIPE_SECRET_KEY},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            return json.loads(resp.read().decode() or "{}")
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8", "replace")[:160]
+        raise RuntimeError(raw or f"stripe {e.code}") from e
+
+
+def ensure_customer(*, email: str, existing_id: str = "", client_id: str = "") -> str:
+    if existing_id and existing_id.startswith("cus_"):
+        return existing_id
+    em = (email or "").strip().lower()
+    if not em:
+        raise RuntimeError("need an email to invoice")
+    found = _get("/customers?email=" + urllib.parse.quote(em) + "&limit=1")
+    data = found.get("data") or []
+    if data:
+        return str(data[0].get("id") or "")
+    created = _post(
+        "/customers",
+        {"email": em, "metadata[client_id]": (client_id or "")[:80]},
+    )
+    cid = str(created.get("id") or "")
+    if not cid.startswith("cus_"):
+        raise RuntimeError("could not create Stripe customer")
+    return cid
+
+
+def draft_invoice(
+    *,
+    customer_id: str,
+    amount_cents: int,
+    description: str,
+    client_id: str = "",
+) -> dict[str, Any]:
+    """Stripe draft only. Does not finalize or send. The host checks it first."""
+    if not customer_id:
+        raise RuntimeError("no Stripe customer")
+    cents = int(amount_cents or 0)
+    if cents <= 0:
+        raise RuntimeError("amount must be positive")
+    desc = (description or "Visit").strip()[:120]
+    _post(
+        "/invoiceitems",
+        {
+            "customer": customer_id,
+            "amount": str(cents),
+            "currency": "usd",
+            "description": desc,
+            "metadata[client_id]": (client_id or "")[:80],
+        },
+        idem=f"draft-ii-{client_id}-{cents}-{desc[:24]}",
+    )
+    inv = _post(
+        "/invoices",
+        {
+            "customer": customer_id,
+            "collection_method": "send_invoice",
+            "days_until_due": "14",
+            "auto_advance": "false",
+            "pending_invoice_items_behavior": "include",
+            "metadata[client_id]": (client_id or "")[:80],
+            "metadata[desk]": "draft-unsent",
+        },
+    )
+    iid = str(inv.get("id") or "")
+    if not iid.startswith("in_"):
+        raise RuntimeError("could not create draft invoice")
+    return {
+        "ok": True,
+        "stripe_id": iid,
+        "status": str(inv.get("status") or "draft"),
+        "amount_cents": int(inv.get("amount_due") or cents),
+        "sent": False,
+    }
+
+
+def create_invoice(
+    *,
+    customer_id: str,
+    lines: list[dict[str, Any]],
+    client_id: str = "",
+) -> dict[str, Any]:
+    if not customer_id:
+        raise RuntimeError("no Stripe customer")
+    if not lines:
+        raise RuntimeError("nothing to invoice")
+    ids: list[str] = []
+    total = 0
+    for i, ln in enumerate(lines):
+        cents = int(ln.get("amount_cents") or 0)
+        if cents <= 0:
+            continue
+        dos = str(ln.get("dos") or "")[:10]
+        kind = str(ln.get("kind") or "visit")
+        if kind == "no_show":
+            desc = f"No-show {dos}" if dos else "No-show"
+        else:
+            desc = f"Visit {dos}" if dos else "Visit"
+        item = _post(
+            "/invoiceitems",
+            {
+                "customer": customer_id,
+                "amount": str(cents),
+                "currency": "usd",
+                "description": desc,
+                "metadata[fee_id]": str(ln.get("id") or ""),
+                "metadata[dos]": dos,
+            },
+            idem=f"ii-{(ln.get('id') or i)}",
+        )
+        ids.append(str(item.get("id") or ""))
+        total += cents
+    if not ids:
+        raise RuntimeError("no invoice lines")
+    inv = _post(
+        "/invoices",
+        {
+            "customer": customer_id,
+            "collection_method": "send_invoice",
+            "days_until_due": "14",
+            "auto_advance": "true",
+            "metadata[client_id]": (client_id or "")[:80],
+            "metadata[fee_ids]": ",".join(str(ln.get("id") or "") for ln in lines)[:500],
+        },
+    )
+    iid = str(inv.get("id") or "")
+    if not iid.startswith("in_"):
+        raise RuntimeError("could not create invoice")
+    final = _post(f"/invoices/{iid}/finalize", {})
+    url = str(final.get("hosted_invoice_url") or inv.get("hosted_invoice_url") or "")
+    return {
+        "ok": True,
+        "stripe_id": iid,
+        "pay_url": url,
+        "amount_cents": int(final.get("amount_due") or total),
+        "status": str(final.get("status") or ""),
+    }
+
+
+def void_invoice(invoice_id: str) -> None:
+    if not (invoice_id or "").startswith("in_"):
+        return
+    _post(f"/invoices/{invoice_id}/void", {})
+
+
+def verify_webhook(payload: bytes, header: str) -> dict[str, Any]:
+    if not STRIPE_WEBHOOK_SECRET:
+        raise RuntimeError("Stripe webhook secret unset")
+    parts = {}
+    for bit in (header or "").split(","):
+        if "=" in bit:
+            k, v = bit.split("=", 1)
+            parts.setdefault(k.strip(), []).append(v.strip())
+    ts = (parts.get("t") or [""])[0]
+    sigs = parts.get("v1") or []
+    if not ts or not sigs:
+        raise RuntimeError("bad stripe signature")
+    if abs(int(time.time()) - int(ts)) > 300:
+        raise RuntimeError("stale stripe signature")
+    signed = ts.encode() + b"." + payload
+    expect = hmac.new(STRIPE_WEBHOOK_SECRET.encode(), signed, hashlib.sha256).hexdigest()
+    if not any(hmac.compare_digest(expect, s) for s in sigs):
+        raise RuntimeError("stripe signature mismatch")
+    return json.loads(payload.decode() or "{}")
+
+
+def charge_off_session(
+    *,
+    customer_id: str,
+    payment_method_id: str,
+    amount_cents: int,
+    dos: str,
+    fee_id: str,
+) -> dict[str, Any]:
+    if not customer_id or not payment_method_id:
+        raise RuntimeError("no card on file")
+    cents = int(amount_cents)
+    if cents <= 0:
+        raise RuntimeError("bad amount")
+    day = (dos or "")[:10]
+    pm = _get("/payment_methods/" + payment_method_id)
+    pm_type = str(pm.get("type") or "card")
+    if pm_type not in ("card", "link"):
+        pm_type = "card"
+    # A saved Stripe Link method is type "link". A card-only PaymentIntent rejects it.
+    data = _post(
+        "/payment_intents",
+        {
+            "amount": str(cents),
+            "currency": "usd",
+            "customer": customer_id,
+            "payment_method": payment_method_id,
+            "payment_method_types[0]": pm_type,
+            "off_session": "true",
+            "confirm": "true",
+            "description": f"Visit {day}" if day else "Visit",
+            "metadata[fee_id]": fee_id,
+            "metadata[dos]": day,
+        },
+        idem=f"fee-{fee_id}-{pm_type}"[:80],
+    )
+    status = str(data.get("status") or "")
+    sid = str(data.get("id") or "")
+    if status == "succeeded":
+        return {"ok": True, "status": "paid", "stripe_id": sid}
+    if status == "requires_action":
+        return {
+            "ok": False,
+            "status": "failed",
+            "stripe_id": sid,
+            "error": "Card needs authentication — send the pay link instead.",
+        }
+    return {
+        "ok": False,
+        "status": "failed",
+        "stripe_id": sid,
+        "error": status or "charge did not complete",
+    }
+
+
+def open_checkout_url(session_id: str) -> str:
+    if not (session_id or "").startswith("cs_"):
+        return ""
+    try:
+        sess = _get("/checkout/sessions/" + session_id)
+    except RuntimeError:
+        return ""
+    if sess.get("status") == "open" and sess.get("url"):
+        return str(sess["url"])
+    return ""
+
+
+def create_balance_checkout(
+    *,
+    customer_id: str,
+    amount_cents: int,
+    client_id: str,
+    fee_ids: list[str],
+    success_url: str,
+    cancel_url: str,
+) -> dict[str, Any]:
+    if amount_cents <= 0:
+        raise RuntimeError("nothing due")
+    if not customer_id.startswith("cus_"):
+        raise RuntimeError("no Stripe customer")
+    bucket = int(time.time()) // 600
+    form = {
+        "mode": "payment",
+        "customer": customer_id,
+        "success_url": success_url,
+        "cancel_url": cancel_url,
+        "line_items[0][quantity]": "1",
+        "line_items[0][price_data][currency]": "usd",
+        "line_items[0][price_data][unit_amount]": str(int(amount_cents)),
+        "line_items[0][price_data][product_data][name]": "Balance due",
+        "payment_intent_data[setup_future_usage]": "off_session",
+        "payment_intent_data[metadata][client_id]": (client_id or "")[:80],
+        "metadata[client_id]": (client_id or "")[:80],
+        "metadata[fee_ids]": ",".join(fee_ids)[:500],
+    }
+    sess = _post(
+        "/checkout/sessions",
+        form,
+        idem=f"bal-{client_id[:16]}-{amount_cents}-{bucket}"[:80],
+    )
+    sid = str(sess.get("id") or "")
+    url = str(sess.get("url") or "") or open_checkout_url(sid)
+    if not sid.startswith("cs_") or not url:
+        raise RuntimeError("could not open checkout")
+    return {"id": sid, "url": url}
+
+
+def finalize_checkout(session_id: str) -> dict[str, Any]:
+    if not (session_id or "").startswith("cs_"):
+        raise RuntimeError("bad session")
+    sess = _get("/checkout/sessions/" + session_id + "?expand[]=payment_intent")
+    if sess.get("payment_status") != "paid":
+        return {"ok": True, "pending": True, "marked": 0}
+    cust = str(sess.get("customer") or "")
+    pi = sess.get("payment_intent") or {}
+    if isinstance(pi, str) and pi:
+        pi = _get("/payment_intents/" + pi)
+    pm = pi.get("payment_method") if isinstance(pi, dict) else ""
+    if isinstance(pm, dict):
+        pm = pm.get("id")
+    pm = str(pm or "")
+    client_id = str((sess.get("metadata") or {}).get("client_id") or "")
+    if cust.startswith("cus_") and pm.startswith("pm_") and client_id:
+        import app.infra.clients_db as clients_db
+
+        clients_db.upsert(
+            {
+                "id": client_id,
+                "stripe_customer_id": cust,
+                "stripe_payment_method_id": pm,
+                "card_on_file": 1,
+            }
+        )
+        _post(
+            f"/customers/{cust}",
+            {"invoice_settings[default_payment_method]": pm},
+        )
+    from app.billing.fees import mark_paid_by_stripe, mark_paid_ids
+
+    ids = [x for x in str((sess.get("metadata") or {}).get("fee_ids") or "").split(",") if x]
+    n = mark_paid_by_stripe(session_id)
+    if ids:
+        n += mark_paid_ids(ids, stripe_id=session_id)
+    return {"ok": True, "marked": n, "saved_card": bool(pm)}

@@ -1,0 +1,291 @@
+"""Client phone book — on-box SQLite. No notes. No PHI in logs."""
+from __future__ import annotations
+
+import re
+from datetime import datetime
+from typing import Any
+from urllib.parse import urlparse
+
+import app.infra.clients_db as clients_db
+from app.booking.practice_links import short_host
+
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+FOLDER_HOSTS = {short_host(), "drive.proton.me"}
+
+
+def folder_url(short: str = "", long: str = "") -> str:
+    """Share a link that opens. Prefer the Drive URL.
+
+    Short links on the configured short host are accepted only when that host
+    is the one in the link. Never invent a path. Only known hosts.
+    """
+    for raw in (long, short):
+        u = (raw or "").strip()
+        if not u.startswith("https://"):
+            continue
+        if urlparse(u).netloc.lower() in FOLDER_HOSTS:
+            return u
+    return ""
+
+
+def supabase_ready() -> bool:
+    """Historic name. Directory is local SQLite now."""
+    return clients_db.ready()
+
+
+def clients_ready() -> bool:
+    return clients_db.ready()
+
+
+def normalize_phone(raw: str) -> str | None:
+    digits = re.sub(r"\D", "", raw or "")
+    if len(digits) == 10:
+        return "+1" + digits
+    if len(digits) == 11 and digits.startswith("1"):
+        return "+" + digits
+    if len(digits) >= 10:
+        return "+" + digits
+    return None
+
+
+def normalize_name(raw: str) -> str:
+    return re.sub(r"[^a-z0-9 ]+", "", (raw or "").lower()).strip()
+
+
+def parse_dob(raw: str) -> str | None:
+    s = (raw or "").strip()
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%d/%m/%Y", "%B %d %Y", "%b %d %Y"):
+        try:
+            return datetime.strptime(s.replace(",", " "), fmt).date().isoformat()
+        except ValueError:
+            continue
+    # 1990-4-7
+    m = re.match(r"^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$", s)
+    if m:
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        try:
+            return datetime(y, mo, d).date().isoformat()
+        except ValueError:
+            return None
+    return None
+
+
+def _public_row(row: dict[str, Any], matched: str) -> dict[str, Any]:
+    status = (row.get("status") or "active").lower()
+    if status == "archived":
+        return {"ok": False, "reason": "not_found"}
+    name = row.get("preferred_name") or row.get("display_name") or "there"
+    return {
+        "ok": True,
+        "matched": matched,
+        "client_id": row.get("id"),
+        "name": name,
+        "email": row.get("email") or "",
+        "status": status,
+        "current": status == "active",
+    }
+
+
+def _staff_view(row: dict[str, Any]) -> dict[str, Any]:
+    name = (
+        row.get("display_name")
+        or " ".join(
+            p for p in (row.get("given_name") or "", row.get("family_name") or "") if p
+        ).strip()
+        or row.get("preferred_name")
+        or ""
+    )
+    return {
+        "id": row.get("id"),
+        "name": name,
+        "preferred_name": row.get("preferred_name") or "",
+        "given_name": row.get("given_name") or "",
+        "family_name": row.get("family_name") or "",
+        "email": row.get("email") or "",
+        "phone": row.get("phone_e164") or "",
+        "sms_consent": row.get("sms_consent"),
+        "sms_consent_source": row.get("sms_consent_source") or "",
+        "dob": row.get("dob") or "",
+        "status": row.get("status") or "",
+        "card_on_file": bool(row.get("card_on_file")),
+        "card_brand": row.get("stripe_card_brand") or "",
+        "card_last4": row.get("stripe_card_last4") or "",
+        "card_exp_month": row.get("stripe_card_exp_month"),
+        "card_exp_year": row.get("stripe_card_exp_year"),
+        "chart_url": folder_url(
+            row.get("drive_folder_short_url") or "",
+            row.get("drive_folder_url") or "",
+        ),
+        "billing_url": folder_url(
+            row.get("billing_folder_short_url") or "",
+            row.get("billing_folder_url") or "",
+        ),
+        "drive_folder_path": row.get("drive_folder_path") or "",
+        "billing_folder_path": row.get("billing_folder_path") or "",
+    }
+
+
+def search_clients(q: str, limit: int = 12) -> list[dict[str, Any]]:
+    """Staff lookup. Returns fill-in fields only — no notes/DX dump."""
+    if not clients_ready():
+        return []
+    e164 = normalize_phone(q)
+    raw = (q or "").strip()
+    if e164:
+        hit = clients_db.get_by_phone(e164)
+        rows = [hit] if hit else clients_db.search(raw, limit)
+    else:
+        rows = clients_db.search(raw, limit)
+    out = []
+    for row in rows:
+        view = _staff_view(row)
+        out.append(
+            {
+                "id": view["id"],
+                "name": view["name"],
+                "preferred_name": view["preferred_name"],
+                "email": view["email"],
+                "phone": view["phone"],
+                "dob": view["dob"],
+                "status": view["status"],
+                "card_on_file": view["card_on_file"],
+                "card_brand": view["card_brand"],
+                "card_last4": view["card_last4"],
+            }
+        )
+    return out[:limit]
+
+
+def create_client(*, name: str, email: str, phone: str = "") -> dict[str, Any]:
+    """Staff add — directory only, no notes/DX."""
+    if not clients_ready():
+        raise RuntimeError("clients db unset")
+    name = (name or "").strip()
+    email = (email or "").strip().lower()
+    if not name or not EMAIL_RE.match(email):
+        raise RuntimeError("need name and a valid email")
+    existing = clients_db.get_by_email(email)
+    if existing:
+        row = existing
+    else:
+        row = clients_db.create(
+            name=name, email=email, phone=normalize_phone(phone) or "", source="desk"
+        )
+    return {
+        "ok": True,
+        "id": row.get("id"),
+        "name": row.get("display_name") or name,
+        "email": row.get("email") or email,
+        "phone": row.get("phone_e164") or "",
+    }
+
+
+def client_by_id(client_id: str) -> dict[str, Any] | None:
+    if not clients_ready() or not client_id:
+        return None
+    row = clients_db.get_by_id(client_id)
+    return _staff_view(row) if row else None
+
+
+def client_by_email(email: str) -> dict[str, Any] | None:
+    em = (email or "").strip().lower()
+    if not clients_ready() or not em or not EMAIL_RE.match(em):
+        return None
+    row = clients_db.get_by_email(em)
+    return _staff_view(row) if row else None
+
+
+def record_card_on_file(
+    *,
+    client_id: str = "",
+    email: str = "",
+    customer_id: str = "",
+    payment_method_id: str = "",
+    brand: str = "",
+    last4: str = "",
+    exp_month: int | None = None,
+    exp_year: int | None = None,
+) -> dict[str, Any]:
+    """Stripe pointers only. Never PAN. No new row if nobody matches."""
+    if not clients_ready():
+        return {"ok": False, "detail": "clients db unset"}
+    row = clients_db.get_by_id(client_id) if client_id else None
+    if not row and email:
+        row = clients_db.get_by_email(email)
+    if not row and customer_id:
+        row = clients_db.get_by_stripe_customer(customer_id)
+    if not row:
+        return {"ok": True, "detail": "stripe-only"}
+    clients_db.upsert(
+        {
+            "id": row["id"],
+            "stripe_customer_id": customer_id or row.get("stripe_customer_id"),
+            "stripe_payment_method_id": payment_method_id,
+            "stripe_card_brand": brand,
+            "stripe_card_last4": last4,
+            "stripe_card_exp_month": exp_month,
+            "stripe_card_exp_year": exp_year,
+            "stripe_card_updated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "card_on_file": True,
+            "card_shared_from": None,
+        }
+    )
+    shared = share_card_with_family(row["id"])
+    return {"ok": True, "client_id": row["id"], "shared_with": len(shared)}
+
+
+def share_card_with_family(source_id: str) -> list[str]:
+    """Same email + phone = one family card (consent line on the card authorization), unless a member
+    saved their own card. Members already pointing at this source are refreshed."""
+    src = clients_db.get_by_id(source_id)
+    if not src or not src.get("card_on_file"):
+        return []
+    out: list[str] = []
+    for m in clients_db.family_of(src):
+        own = m.get("card_on_file") and not m.get("card_shared_from")
+        if own:
+            continue
+        if m.get("card_shared_from") and m["card_shared_from"] != source_id:
+            continue
+        clients_db.upsert(
+            {
+                "id": m["id"],
+                "stripe_customer_id": src.get("stripe_customer_id"),
+                "stripe_payment_method_id": src.get("stripe_payment_method_id"),
+                "stripe_card_brand": src.get("stripe_card_brand"),
+                "stripe_card_last4": src.get("stripe_card_last4"),
+                "stripe_card_exp_month": src.get("stripe_card_exp_month"),
+                "stripe_card_exp_year": src.get("stripe_card_exp_year"),
+                "stripe_card_updated_at": src.get("stripe_card_updated_at"),
+                "card_on_file": True,
+                "card_shared_from": source_id,
+            }
+        )
+        out.append(m["id"])
+    return out
+
+
+def verify_patient(
+    *,
+    email: str = "",
+    phone: str = "",
+    full_name: str = "",
+    first_name: str = "",
+    last_name: str = "",
+    dob: str = "",
+) -> dict[str, Any]:
+    """Current-patient check. Name and date of birth are not verifiers.
+
+    A matching email or phone does not return a chart link. The public door
+    sends a code to that channel and mints a token only after the code.
+    """
+    del full_name, first_name, last_name, dob
+    em = (email or "").strip().lower()
+    e164 = normalize_phone(phone) if phone else None
+    if not ((em and EMAIL_RE.match(em)) or e164):
+        return {"ok": False, "reason": "need_email_or_phone"}
+    if not clients_ready():
+        return {"ok": False, "reason": "verify_unavailable"}
+    return {"ok": False, "reason": "need_code"}
